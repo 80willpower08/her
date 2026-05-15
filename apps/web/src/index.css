@@ -1,0 +1,363 @@
+/* ──────────────────────────────────────────────────────────────────────────
+   Time-keeper — Night City Cabinet (adapted from Curator)
+   Theme: deep obsidian charcoal base, pure crimson accents, ash-red-pink ink,
+   ambient bloom shadows. Serif display, sans body, mono numerics.
+   ────────────────────────────────────────────────────────────────────────── */
+
+@import '@fontsource-variable/fraunces/wght.css';
+@import '@fontsource-variable/fraunces/wght-italic.css';
+@import '@fontsource-variable/commissioner/wght.css';
+@import '@fontsource/jetbrains-mono/400.css';
+@import '@fontsource/jetbrains-mono/500.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* ─── Curator tokens (raw values, used directly by display classes) ─── */
+    --black: #050506;
+    --bg-deep: #0a0b0d;
+    --bg-deeper: #050506;
+    --surface: #0f1012;
+    --surface-raised: #131112;
+    --surface-hi: #1a1718;
+
+    --ink: #a68c8c;
+    --ink-soft: #8e7878;
+    --ink-muted: #6e5a5a;
+    --ink-faint: #543939;
+
+    --crimson-deep: #4a0008;
+    --crimson-dark: #8a0020;
+    --crimson: #ff0033;
+    --crimson-hi: #ff3333;
+    --crimson-shine: #ff4d4d;
+    --bloom-rgb: 255, 0, 51;
+
+    --sage: #7a9f63;
+
+    /* Glow recipes */
+    --glow-crimson: 0 0 18px rgba(var(--bloom-rgb), 0.55);
+    --glow-crimson-soft: 0 0 32px rgba(var(--bloom-rgb), 0.2);
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.6), 0 1px 1px rgba(0, 0, 0, 0.4);
+    --shadow: 0 10px 28px rgba(0, 0, 0, 0.7), 0 4px 8px rgba(0, 0, 0, 0.5);
+    --shadow-ruby: 0 0 0 1px rgba(255, 0, 51, 0.4),
+      0 10px 32px -10px rgba(255, 0, 51, 0.55);
+
+    /* Fonts */
+    --font-display: 'Fraunces Variable', 'Iowan Old Style', 'Palatino', serif;
+    --font-body: 'Commissioner Variable', ui-sans-serif, system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+    --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+    --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+
+    /* ─── shadcn/Tailwind tokens (HSL strings) repointed at the cabinet ─── */
+    /* shadcn expects "H S% L%" tokens consumed via hsl(var(--foo)). */
+    --background: 220 11% 5%;          /* --bg-deep */
+    --foreground: 0 14% 60%;            /* --ink */
+    --card: 220 8% 7%;                  /* --surface */
+    --card-foreground: 0 14% 60%;
+    --popover: 220 8% 7%;
+    --popover-foreground: 0 14% 60%;
+
+    /* primary = crimson (the load-bearing accent) */
+    --primary: 351 100% 50%;            /* --crimson */
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 350 5% 9%;             /* --surface-raised */
+    --secondary-foreground: 0 14% 60%;
+
+    --muted: 350 5% 9%;
+    --muted-foreground: 0 11% 48%;      /* --ink-soft */
+
+    --accent: 350 5% 9%;
+    --accent-foreground: 0 14% 60%;
+
+    --destructive: 351 100% 50%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 0 0% 100% / 0.06;         /* (radix uses opaque) — see fallback below */
+    --input: 0 0% 100% / 0.06;
+    --ring: 351 100% 50%;
+
+    --radius: 0.5rem;
+  }
+
+  /* Some shadcn primitives don't tolerate "/ alpha" syntax in the token —
+     give them a flat near-black-white border fallback. The body still gets
+     the alpha look via direct CSS uses of --hairline below. */
+  :root {
+    --border: 0 0% 100%;
+    --input: 0 0% 100%;
+  }
+
+  /* Direct CSS-vars for hairlines (not via Tailwind border-border) */
+  :root {
+    --hairline: rgba(255, 255, 255, 0.06);
+    --hairline-strong: rgba(255, 255, 255, 0.12);
+    --hairline-crimson: rgba(255, 0, 51, 0.55);
+  }
+
+  * {
+    border-color: var(--hairline);
+  }
+
+  html,
+  body {
+    height: 100%;
+    background: var(--bg-deep);
+    color: var(--ink);
+    font-family: var(--font-body);
+    font-size: 15px;
+    line-height: 1.55;
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior-y: contain;
+    font-variation-settings: 'opsz' 14, 'SOFT' 30;
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    color-scheme: dark;
+  }
+
+  body {
+    font-feature-settings: 'rlig' 1, 'calt' 1;
+  }
+
+  /* Fine-grain noise overlay — keeps the obsidian charcoal from reading flat */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 1000;
+    mix-blend-mode: overlay;
+    opacity: 0.08;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1   0 0 0 0 1   0 0 0 0 1   0 0 0 0.45 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+  }
+
+  /* Ambient gradients — crimson safelight bottom-right, cool slate top-left */
+  body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: -1;
+    background:
+      radial-gradient(65% 45% at 100% 110%, rgba(255, 0, 51, 0.14), transparent 65%),
+      radial-gradient(55% 45% at 0% -10%, rgba(40, 50, 70, 0.08), transparent 70%),
+      radial-gradient(80% 90% at 50% 110%, rgba(0, 0, 0, 0.65), transparent 60%);
+  }
+
+  ::selection {
+    background: var(--crimson);
+    color: #fff;
+  }
+
+  :focus-visible {
+    outline: 1px solid var(--crimson);
+    outline-offset: 2px;
+    border-radius: 3px;
+    box-shadow: 0 0 12px rgba(var(--bloom-rgb), 0.35);
+  }
+}
+
+/* ─── Crimson scrollbar — matches Curator ──────────────────────────────── */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--crimson) transparent;
+}
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, var(--crimson-hi), var(--crimson));
+  border-radius: 999px;
+  box-shadow: 0 0 10px rgba(var(--bloom-rgb), 0.55);
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, var(--crimson-shine), var(--crimson-hi));
+}
+
+/* ─── Display / type utility classes ───────────────────────────────────── */
+
+.display {
+  font-family: var(--font-display);
+  font-variation-settings: 'opsz' 36, 'SOFT' 40, 'WONK' 0;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  line-height: 1.05;
+  color: var(--ink);
+}
+
+.display--script {
+  font-variation-settings: 'opsz' 36, 'SOFT' 100, 'WONK' 1;
+  font-style: italic;
+  font-weight: 500;
+}
+
+.figure {
+  font-family: var(--font-display);
+  font-variation-settings: 'opsz' 60, 'SOFT' 50;
+  font-weight: 400;
+  font-feature-settings: 'lnum', 'tnum';
+  letter-spacing: -0.015em;
+}
+
+.overline {
+  font-family: var(--font-body);
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ink-muted);
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: 0.82em;
+  letter-spacing: 0;
+}
+
+/* ─── Glow utilities ───────────────────────────────────────────────────── */
+
+.red-glow-text {
+  color: var(--crimson);
+  text-shadow:
+    0 0 5px var(--crimson),
+    0 0 10px var(--crimson),
+    0 0 20px rgba(var(--bloom-rgb), 0.4);
+}
+
+.red-glow-text-soft {
+  color: var(--crimson-shine);
+  text-shadow:
+    0 0 4px rgba(var(--bloom-rgb), 0.6),
+    0 0 12px rgba(var(--bloom-rgb), 0.3);
+}
+
+.red-glow-border {
+  border: 1px solid var(--crimson) !important;
+  box-shadow:
+    0 0 5px var(--crimson),
+    0 0 15px rgba(var(--bloom-rgb), 0.4);
+}
+
+.red-glow-fill {
+  background-color: var(--surface-raised);
+  border: 1px solid var(--crimson);
+  box-shadow:
+    inset 0 0 10px rgba(var(--bloom-rgb), 0.3),
+    0 0 20px rgba(var(--bloom-rgb), 0.4);
+  border-radius: 999px;
+}
+
+/* ─── Decorative dividers + tags ───────────────────────────────────────── */
+
+.divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--ink-faint);
+}
+.divider::before,
+.divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--hairline-strong);
+}
+.divider__mark {
+  font-family: var(--font-display);
+  font-style: italic;
+  color: var(--crimson);
+  font-size: 14px;
+  letter-spacing: 0.1em;
+  text-shadow:
+    0 0 6px var(--crimson),
+    0 0 14px rgba(var(--bloom-rgb), 0.4);
+}
+
+.specimen-tag {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--crimson);
+  padding: 2px 7px;
+  border: 1px solid var(--crimson);
+  border-radius: 2px;
+  background: var(--surface-raised);
+  box-shadow:
+    inset 0 0 8px rgba(var(--bloom-rgb), 0.25),
+    0 0 12px rgba(var(--bloom-rgb), 0.35);
+  text-shadow:
+    0 0 5px var(--crimson),
+    0 0 10px rgba(var(--bloom-rgb), 0.4);
+}
+
+/* ─── Bracket corners for cards ────────────────────────────────────────── */
+
+.bracket-wrap {
+  position: relative;
+}
+.bracket-wrap::before,
+.bracket-wrap::after,
+.bracket-wrap > .bracket-tr,
+.bracket-wrap > .bracket-bl {
+  content: '';
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  pointer-events: none;
+  opacity: 0.85;
+}
+.bracket-wrap::before {
+  top: 4px;
+  left: 4px;
+  border-top: 1px solid var(--crimson);
+  border-left: 1px solid var(--crimson);
+}
+.bracket-wrap::after {
+  bottom: 4px;
+  right: 4px;
+  border-bottom: 1px solid var(--crimson);
+  border-right: 1px solid var(--crimson);
+}
+
+/* ─── Card depth — soften shadcn flat cards to feel cabinet-y ─────────── */
+
+[class*='border'] {
+  /* shadcn Card etc. uses bg-card border. Add a subtle lift. */
+}
+
+/* ─── Animations ───────────────────────────────────────────────────────── */
+
+@keyframes riseIn {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 8px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.rise {
+  animation: riseIn 420ms var(--ease-out) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "time-keeper": {
+      "type": "http",
+      "url": "http://api:3001/mcp"
+    }
+  }
+}

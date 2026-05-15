@@ -1,0 +1,1215 @@
+// Time-keeper schema
+// Phase 0: trimmed from v1 (creature/DNA removed).
+// Phase 1: Category as real table, Conversation + Message tables.
+// Phase 1.6: weight on Goal + Category (drives ranking + rollup).
+// Phase 2: ExternalAccount + CalendarEvent + IngestionRun for calendar/email/drive ingestion.
+// Tables for Agent, AgentRun, Policy, etc. land in their respective phases.
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String?  @unique
+  username  String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tasks            Task[]
+  goals            Goal[]
+  categories       Category[]
+  conversations    Conversation[]
+  settings         UserSettings?
+  taskHistory      TaskHistory[]
+  categoryProgress CategoryProgress[]
+  externalAccounts ExternalAccount[]
+  calendarEvents   CalendarEvent[]
+  emailMessages    EmailMessage[]
+  calendarSources  CalendarSource[]
+  sheetSources     SheetSource[]
+  devices          Device[]
+  notifications    Notification[]
+  agentRuns        AgentRun[]
+  proposedActions  ProposedAction[]
+  chatThreads      ChatThread[]
+  observations     Observation[]
+  projects         Project[]
+  dataSources      DataSource[]
+  todayCuration    TodayCuration?
+  dayRatings       DayRating[]
+
+  @@map("users")
+}
+
+model Category {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  slug      String
+  name      String
+  color     String   @default("#64748b")
+  icon      String?
+  sortOrder Int      @default(0)
+  weight    Int      @default(5) // 1-10, how much this life-area matters to the user right now
+  isDefault Boolean  @default(false)
+  archived  Boolean  @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tasks                   Task[]
+  goals                   Goal[]
+  defaultedFromAccounts   ExternalAccount[]
+  calendarSources         CalendarSource[]
+  sheetSources            SheetSource[]
+  projects                Project[]
+  dataSources             DataSource[]
+
+  @@unique([userId, slug])
+  @@index([userId, sortOrder])
+  @@map("categories")
+}
+
+model UserSettings {
+  id     String @id @default(uuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  enableNotifications   Boolean @default(true)
+  reminderMinutesBefore Int     @default(30)
+
+  quietHoursStart String? // "23:00"
+  quietHoursEnd   String? // "06:00"
+
+  customCategories      Json?
+  categoryWeights       Json?
+  categoryRelationships Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("user_settings")
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+model Task {
+  id          String       @id @default(uuid())
+  userId      String
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  title       String
+  description String?
+  categoryId  String?
+  category    Category?    @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  priority    TaskPriority @default(MEDIUM)
+  weight      Int          @default(5)
+
+  dueDate          DateTime?
+  scheduledFor     DateTime?
+  estimatedMinutes Int?
+  recurrence       Json?
+
+  completed   Boolean   @default(false)
+  completedAt DateTime?
+
+  timeSpent   Int      @default(0)
+  streakCount Int      @default(0)
+
+  tags  String[]
+  notes String?
+
+  parentId String?
+  parent   Task?   @relation("TaskSubtasks", fields: [parentId], references: [id], onDelete: Cascade)
+  subtasks Task[]  @relation("TaskSubtasks")
+
+  // Optional pin to a calendar event — task is "prep for that event".
+  // The event's start time becomes the urgency anchor.
+  linkedCalendarEventId String?
+  linkedCalendarEvent   CalendarEvent? @relation(fields: [linkedCalendarEventId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  history          TaskHistory[]
+  goalTasks        GoalTask[]
+  blockedByTasks   TaskPrerequisite[] @relation("BlockedTasks")
+  prerequisiteFor  TaskPrerequisite[] @relation("PrerequisiteTasks")
+
+  @@index([userId, completed])
+  @@index([userId, categoryId])
+  @@index([dueDate])
+  @@index([parentId])
+  @@map("tasks")
+}
+
+model TaskHistory {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  taskId String
+  task   Task   @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  completedAt DateTime @default(now())
+  onTime      Boolean  @default(true)
+  timeSpent   Int?
+
+  @@index([userId, completedAt])
+  @@map("task_history")
+}
+
+model TaskPrerequisite {
+  id             String @id @default(uuid())
+  taskId         String
+  task           Task   @relation("BlockedTasks", fields: [taskId], references: [id], onDelete: Cascade)
+  prerequisiteId String
+  prerequisite   Task   @relation("PrerequisiteTasks", fields: [prerequisiteId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([taskId, prerequisiteId])
+  @@index([taskId])
+  @@index([prerequisiteId])
+  @@map("task_prerequisites")
+}
+
+model Goal {
+  id          String  @id @default(uuid())
+  userId      String
+  user        User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  title       String
+  description String?
+  weight      Int     @default(5) // 1-10, importance of this goal
+
+  primaryCategoryId String?
+  primaryCategory   Category? @relation(fields: [primaryCategoryId], references: [id], onDelete: SetNull)
+
+  targetDate   DateTime?
+  targetValue  Int?
+  currentValue Int?      @default(0)
+
+  completed   Boolean   @default(false)
+  completedAt DateTime?
+  archived    Boolean   @default(false)
+
+  progress Float @default(0.0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  milestones        Milestone[]
+  tasks             GoalTask[]
+  goalCategories    GoalCategory[]
+  relationshipsFrom GoalRelationship[] @relation("GoalRelationshipsFrom")
+  relationshipsTo   GoalRelationship[] @relation("GoalRelationshipsTo")
+
+  @@index([userId, completed])
+  @@map("goals")
+}
+
+model Milestone {
+  id     String @id @default(uuid())
+  goalId String
+  goal   Goal   @relation(fields: [goalId], references: [id], onDelete: Cascade)
+
+  title       String
+  description String?
+  order       Int     @default(0)
+  weight      Int     @default(1)
+
+  completed   Boolean   @default(false)
+  completedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([goalId, order])
+  @@map("milestones")
+}
+
+model GoalTask {
+  goalId String
+  goal   Goal   @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  taskId String
+  task   Task   @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@id([goalId, taskId])
+  @@map("goal_tasks")
+}
+
+enum GoalRelationType {
+  PREREQUISITE
+  ASSISTS
+  SYNERGY
+}
+
+model GoalRelationship {
+  id String @id @default(uuid())
+
+  fromGoalId String
+  fromGoal   Goal   @relation("GoalRelationshipsFrom", fields: [fromGoalId], references: [id], onDelete: Cascade)
+
+  toGoalId String
+  toGoal   Goal   @relation("GoalRelationshipsTo", fields: [toGoalId], references: [id], onDelete: Cascade)
+
+  type     GoalRelationType @default(ASSISTS)
+  strength Float            @default(0.5)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([fromGoalId, toGoalId])
+  @@index([fromGoalId])
+  @@index([toGoalId])
+  @@map("goal_relationships")
+}
+
+model GoalCategory {
+  id         String @id @default(uuid())
+  goalId     String
+  goal       Goal   @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  categoryId String
+
+  isPrimary  Boolean @default(false)
+  percentage Float   @default(30.0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([goalId, categoryId])
+  @@index([goalId])
+  @@map("goal_categories")
+}
+
+// Repurposed from v1's CategoryXP — tracks accumulated time/effort per category,
+// not gamified XP. Same shape, new meaning.
+model CategoryProgress {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  categoryId         String
+  accumulatedMinutes Int    @default(0)
+  taskCompletions    Int    @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, categoryId])
+  @@index([userId])
+  @@map("category_progress")
+}
+
+// --- Conversations & messages ---
+//
+// Conversations attach to entities (tasks/goals for now; events/emails added
+// in later phases). Messages distinguish kinds so the agent layer can treat
+// NOTE (silent context) differently from QUESTION (must reply) and
+// INSTRUCTION (soft constraint scoped to the entity).
+
+enum ConversationEntityType {
+  TASK
+  GOAL
+  EVENT
+}
+
+enum MessageKind {
+  NOTE
+  QUESTION
+  INSTRUCTION
+  AGENT_REPLY
+  AGENT_ACTION
+  AGENT_STATUS
+}
+
+enum MessageAuthorType {
+  USER
+  AGENT
+}
+
+model Conversation {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  entityType ConversationEntityType
+  entityId   String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  messages Message[]
+
+  @@unique([entityType, entityId])
+  @@index([userId])
+  @@map("conversations")
+}
+
+model Message {
+  id             String       @id @default(uuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  kind       MessageKind
+  body       String
+  authorType MessageAuthorType
+  authorId   String?
+
+  createdAt DateTime @default(now())
+
+  @@index([conversationId, createdAt])
+  @@map("messages")
+}
+
+// --- External accounts + ingested events ---
+
+enum ExternalAccountKind {
+  OAUTH
+  ICS_URL
+}
+
+enum ExternalAccountProvider {
+  GOOGLE
+  MICROSOFT
+  ICS
+}
+
+enum ExternalAccountStatus {
+  ACTIVE
+  NEEDS_REAUTH
+  ERROR
+  DISCONNECTED
+}
+
+model ExternalAccount {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  kind     ExternalAccountKind
+  provider ExternalAccountProvider
+
+  accountEmail String? // e.g. "you@gmail.com" — null for ICS_URL where there's no account
+  displayName  String? // auto-set to email at connect; not user-edited
+  // User-editable label that classifies the account in their life.
+  // Examples: "Job 1 — Security", "Job 2 — Sales", "Personal", "Family".
+  label        String?
+  // Default category for tasks linked to events from this account.
+  // When the user pins a task to one of this account's events, the task's
+  // category auto-fills from here unless already set.
+  defaultCategoryId String?
+  defaultCategory   Category? @relation(fields: [defaultCategoryId], references: [id], onDelete: SetNull)
+
+  // OAUTH-specific
+  accessTokenEncrypted  String? // base64(iv|tag|ciphertext) of access token
+  refreshTokenEncrypted String? // same encoding for refresh token
+  tokenExpiresAt        DateTime?
+  scopes                String[]
+
+  // ICS_URL-specific
+  icsUrl String?
+
+  // For visual distinction in unified timeline
+  color String @default("#0ea5e9")
+
+  status        ExternalAccountStatus @default(ACTIVE)
+  lastSyncedAt  DateTime?
+  lastError     String?
+  // Incremental sync token (Google) or delta link (Microsoft) — provider-specific
+  syncToken     String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  events          CalendarEvent[]
+  emailMessages   EmailMessage[]
+  ingestionRuns   IngestionRun[]
+  calendarSources CalendarSource[]
+  sheetSources    SheetSource[]
+
+  @@unique([userId, provider, accountEmail])
+  @@index([userId])
+  @@map("external_accounts")
+}
+
+enum CalendarEventStatus {
+  CONFIRMED
+  TENTATIVE
+  CANCELLED
+}
+
+enum CalendarEventTransparency {
+  BUSY
+  FREE
+}
+
+model CalendarEvent {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  externalAccountId String
+  externalAccount   ExternalAccount @relation(fields: [externalAccountId], references: [id], onDelete: Cascade)
+
+  // Provider's identifier — used for idempotent upsert on re-sync
+  sourceEventId    String
+  sourceCalendarId String?
+  // Cross-calendar dedup key. Same meeting invited to multiple of the user's
+  // calendars carries the same iCalUid from both Google and Microsoft.
+  // Used for dedup; not unique (recurring instances may share it across
+  // occurrences within one calendar).
+  iCalUid          String?
+  // For recurring instances: the master event's id
+  recurringEventId String?
+
+  title       String
+  description String?
+  location    String?
+
+  startsAt DateTime
+  endsAt   DateTime
+  allDay   Boolean  @default(false)
+
+  isRecurring Boolean @default(false)
+  htmlLink    String?
+
+  attendees Json? // array of { email, name?, responseStatus? }
+
+  status       CalendarEventStatus       @default(CONFIRMED)
+  transparency CalendarEventTransparency @default(BUSY)
+
+  // User chose to hide this specific event from views + agent context. Use
+  // sparingly — a hidden CalendarSource is usually better when whole calendars
+  // are noise. This is for one-off "I don't care about this single event."
+  userHidden Boolean @default(false)
+
+  // Original payload for debugging / future re-normalization without re-fetch
+  raw Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  linkedTasks Task[]
+
+  @@unique([externalAccountId, sourceEventId])
+  @@index([userId, startsAt])
+  @@index([userId, iCalUid])
+  @@index([externalAccountId, startsAt])
+  @@map("calendar_events")
+}
+
+// Ingested or manually-shared messages. Body stored truncated; full body
+// left in the source mailbox unless explicitly fetched on demand.
+model EmailMessage {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Nullable: SHARED rows have no OAuth account behind them.
+  externalAccountId String?
+  externalAccount   ExternalAccount? @relation(fields: [externalAccountId], references: [id], onDelete: Cascade)
+
+  source EmailSource @default(GMAIL)
+
+  // Provider-specific identifiers (sourceMessageId is the share id for SHARED rows)
+  sourceMessageId String
+  sourceThreadId  String?
+
+  fromAddress  String
+  fromName     String?
+  toAddresses  String[]
+  subject      String
+  snippet      String?
+  bodyText     String?
+  bodyHtml     String?
+
+  // For SHARED items: optional URL captured from the share payload.
+  sourceUrl String?
+
+  // Provider-tagged labels — for Gmail this is INBOX/UNREAD/STARRED + user labels
+  labels String[]
+
+  isUnread   Boolean @default(true)
+  isStarred  Boolean @default(false)
+  isImportant Boolean @default(false)
+
+  // Triage state for SHARED items: PENDING until user picks an action.
+  triageStatus EmailTriageStatus @default(NONE)
+
+  receivedAt DateTime
+  raw        Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([externalAccountId, sourceMessageId])
+  @@index([userId, receivedAt])
+  @@index([externalAccountId, receivedAt])
+  @@index([userId, triageStatus, receivedAt])
+  @@map("email_messages")
+}
+
+// Per-calendar overrides — friendly label, category mapping, hide flag.
+// Distinguishes events from different calendars under the same OAuth account
+// (e.g. a primary Google calendar vs. a work calendar shared into Google).
+model CalendarSource {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  externalAccountId String
+  externalAccount   ExternalAccount @relation(fields: [externalAccountId], references: [id], onDelete: Cascade)
+
+  // The provider's calendar id. For Google: usually an email address or
+  // an "...@import.calendar.google.com" id for subscribed calendars.
+  sourceCalendarId String
+
+  // User-friendly label exposed to the agent and the UI.
+  label String
+
+  // Category mapping — events from this calendar inherit this category for
+  // weighting purposes when no explicit task category overrides.
+  categoryId String?
+  category   Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  // When true, events are excluded from agent context and the unified UI.
+  hidden Boolean @default(false)
+
+  // Optional UI color override.
+  color String?
+
+  // Free-text relevance notes the agent reads when reasoning about events
+  // from this calendar. Examples:
+  //   "Family calendar — kids' practices involve me; school board is spouse only; $-prefix titles are paydays (informational)."
+  //   "Work calendar — anything with 'sync' is recurring and low priority."
+  notes String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([externalAccountId, sourceCalendarId])
+  @@index([userId])
+  @@map("calendar_sources")
+}
+
+// Registered Google Sheets (or sub-ranges of sheets) the agent treats as
+// data sources. One spreadsheet may be registered multiple times with
+// different ranges + descriptions (e.g., "Finance — Debt", "Finance — Income").
+model SheetSource {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  externalAccountId String
+  externalAccount   ExternalAccount @relation(fields: [externalAccountId], references: [id], onDelete: Cascade)
+
+  spreadsheetId String  // from the URL: /spreadsheets/d/<this>/edit
+  sheetName     String? // tab name; null = first tab
+  range         String? // A1 notation, e.g. "A1:F200"; null = first 200 rows × 26 cols
+
+  label       String  // user-facing display, e.g. "Finance — Debt"
+  description String? // free-text the agent reads to interpret columns
+
+  // Anchor for goals/tasks the agent proposes from this source.
+  categoryId String?
+  category   Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  syncCadence  SheetSyncCadence @default(WEEKLY)
+  enabled      Boolean          @default(true)
+
+  // Notification before the scheduled sync, prompting the user to update
+  // their numbers in the sheet first.
+  preUpdateReminderEnabled     Boolean @default(true)
+  preUpdateReminderHoursBefore Int     @default(24)
+  lastReminderSentAt           DateTime?
+
+  // Sync state
+  lastSyncedAt DateTime?
+  lastError    String?
+  snapshot     Json? // { header: [...], rows: [[...], ...], fetchedAt: "..." }
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([enabled, syncCadence, lastSyncedAt])
+  @@map("sheet_sources")
+}
+
+enum SheetSyncCadence {
+  MANUAL
+  DAILY
+  WEEKLY
+}
+
+// Generic HTTP-GET feed from another app's read-only API. Mirrors SheetSource
+// but for arbitrary JSON endpoints (your own self-hosted apps, public APIs).
+// Read-only: we never PUT/PATCH/POST/DELETE on these. Server-side enforcement
+// is the user's responsibility (e.g., curator's read-only role).
+model DataSource {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  label       String  // user-facing — "Curator — Items", "Curator — Stats"
+  description String? // free-text agent reads to interpret the response
+
+  baseUrl      String  // e.g., "https://curator.phnet.me" (no trailing slash)
+  endpointPath String  // e.g., "/api/items?limit=200" — appended verbatim
+
+  // Auth strategy. See DataSourceAuthMode below for authConfig shape per mode.
+  authMode   DataSourceAuthMode @default(NONE)
+  authConfig Json?
+
+  // Additional headers attached on every request (preflight + main).
+  staticHeaders Json?
+
+  // Anchor — agent uses this for context relevance.
+  categoryId String?
+  category   Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  syncCadence DataSourceSyncCadence @default(DAILY)
+  enabled     Boolean               @default(true)
+
+  // Sync state
+  lastSyncedAt DateTime?
+  lastError    String?
+  // Shape: { data: <parsed JSON or raw text>, fetchedAt: ISO, status: int,
+  //          sizeBytes: int, truncated: bool, contentType: string }
+  snapshot Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([enabled, syncCadence, lastSyncedAt])
+  @@map("data_sources")
+}
+
+// authConfig JSON shapes by mode:
+//   NONE             → null
+//   BEARER           → { "token": "..." }
+//   BASIC            → { "username": "...", "password": "..." }
+//   COOKIE_LOGIN     → { "loginPath": "/api/auth/login",
+//                        "loginMethod": "POST",
+//                        "loginBody": { "username": "...", "password": "..." },
+//                        "loginContentType": "application/json" }
+//   CUSTOM_HEADERS   → { "headers": { "X-Foo": "...", "X-Bar": "..." } }
+enum DataSourceAuthMode {
+  NONE
+  BEARER
+  BASIC
+  COOKIE_LOGIN
+  CUSTOM_HEADERS
+}
+
+enum DataSourceSyncCadence {
+  MANUAL
+  HOURLY
+  DAILY
+  WEEKLY
+}
+
+enum EmailSource {
+  GMAIL
+  OUTLOOK
+  SHARED
+}
+
+enum EmailTriageStatus {
+  NONE
+  PENDING
+  CONVERTED_TO_TASK
+  ATTACHED_TO_GOAL
+  NOTED
+  DISCARDED
+}
+
+enum IngestionRunStatus {
+  RUNNING
+  OK
+  ERROR
+}
+
+model IngestionRun {
+  id String @id @default(uuid())
+
+  externalAccountId String
+  externalAccount   ExternalAccount @relation(fields: [externalAccountId], references: [id], onDelete: Cascade)
+
+  startedAt  DateTime           @default(now())
+  finishedAt DateTime?
+  status     IngestionRunStatus @default(RUNNING)
+
+  itemsFetched Int @default(0)
+  itemsCreated Int @default(0)
+  itemsUpdated Int @default(0)
+  itemsDeleted Int @default(0)
+
+  error String?
+
+  @@index([externalAccountId, startedAt])
+  @@map("ingestion_runs")
+}
+
+// --- Devices + notifications ---
+
+model Device {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Web Push subscription (RFC 8030)
+  endpoint  String  @unique
+  p256dh    String
+  auth      String
+  userAgent String?
+  label     String? // optional user-visible label, e.g. "Pixel 8 Chrome"
+
+  createdAt  DateTime @default(now())
+  lastUsedAt DateTime @default(now())
+
+  @@index([userId])
+  @@map("devices")
+}
+
+enum NotificationChannel {
+  WEB_PUSH
+  NTFY
+}
+
+enum NotificationKind {
+  TASK_REMINDER
+  EVENT_REMINDER
+  AGENT_PROPOSAL
+  AGENT_QUESTION
+  TEST
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+  SUPPRESSED
+}
+
+enum NotificationPriority {
+  LOW
+  NORMAL
+  URGENT
+}
+
+model Notification {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  kind     NotificationKind
+  channel  NotificationChannel
+  priority NotificationPriority @default(NORMAL)
+
+  title String
+  body  String
+  // App deep-link target — e.g., "/today" or "/tasks/<id>"
+  url   String?
+
+  // Source entity for idempotency. e.g. ("task", taskId) or ("event", eventId).
+  sourceType String?
+  sourceId   String?
+  // Opaque marker of the source's relevant state at dispatch time.
+  // For events: startsAt ISO string. For tasks: dueDate ISO string.
+  // Idempotency match includes this — so if a meeting moves, a fresh
+  // reminder fires for the new time.
+  sourceVersion String?
+
+  status       NotificationStatus @default(PENDING)
+  scheduledFor DateTime
+  sentAt       DateTime?
+  error        String?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, scheduledFor])
+  @@index([userId, sourceType, sourceId, kind, sourceVersion])
+  @@map("notifications")
+}
+
+// --- Agent runs + proposed actions ---
+
+enum AgentKind {
+  ORCHESTRATOR
+  PRIORITIZATION
+  EMAIL_TRIAGE
+  CALENDAR_CONFLICT
+  STATUS_SUMMARY
+  CHAT
+}
+
+enum AgentRunStatus {
+  RUNNING
+  OK
+  ERROR
+  CANCELLED
+}
+
+model AgentRun {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  kind    AgentKind
+  trigger String // "scheduled" | "manual" | "event:..."
+  status  AgentRunStatus @default(RUNNING)
+
+  startedAt  DateTime  @default(now())
+  finishedAt DateTime?
+
+  // Curated input — refs to source records + structured summary the agent saw.
+  // The full picture for "why did the agent decide this?" provenance.
+  inputContext Json?
+
+  // Raw stdout from claude -p (for debugging / re-running)
+  rawOutput String?
+  // Parsed structured decision
+  decision Json?
+
+  inputTokens  Int @default(0)
+  outputTokens Int @default(0)
+
+  error String?
+
+  createdAt DateTime @default(now())
+
+  proposedActions ProposedAction[]
+  chatMessages    ChatMessage[]
+  observations    Observation[]
+  todayCurations  TodayCuration[]
+
+  @@index([userId, kind, startedAt])
+  @@map("agent_runs")
+}
+
+// Entity-anchored chat with the agent. One thread per (userId, anchorType, anchorId).
+// anchorType is a discriminator string: "task" | "goal" | "event" | "message" |
+// "proposed_action" | "general". anchorId is the entity uuid (null for general).
+model ChatThread {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  anchorType String
+  anchorId   String?
+
+  // Optional user-set title; otherwise UI derives it from the anchor entity.
+  title String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  messages     ChatMessage[]
+  observations Observation[]
+
+  @@unique([userId, anchorType, anchorId])
+  @@index([userId, updatedAt])
+  @@map("chat_threads")
+}
+
+model ChatMessage {
+  id       String @id @default(uuid())
+  threadId String
+  thread   ChatThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+
+  role ChatRole
+  body String
+
+  // For AGENT messages, points at the run that produced it.
+  agentRunId String?
+  agentRun   AgentRun? @relation(fields: [agentRunId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([threadId, createdAt])
+  @@map("chat_messages")
+}
+
+enum ChatRole {
+  USER
+  AGENT
+  SYSTEM
+}
+
+// "What the agent knows about you" — durable memory the agent reads on every
+// run. Six kinds with different lifetimes and use patterns; see HANDOFF.md.
+//
+// Write strategy: AUTO via record_observation MCP tool — no review queue.
+// User can edit/confirm/dispute/archive via the /about-me page.
+//
+// Supersedes chain: when an observation is replaced (user changes their mind,
+// agent revises confidence), the old row is kept with supersededAt set; the
+// new row points at it via supersedesId. The agent reads "current" rows only
+// (supersededAt IS NULL AND archived = false AND (expiresAt IS NULL OR > now)).
+model Observation {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  kind    ObservationKind
+  subject String          // short title — "Retirement target", "Workload threshold"
+  body    String          // free-text — the observation itself
+
+  confidence Float  @default(1.0) // 0..1
+  source     String                // user_chat | user_directive | agent_inferred | data_pattern
+
+  // Provenance — what produced this observation
+  sourceRunId    String?
+  sourceRun      AgentRun?   @relation(fields: [sourceRunId], references: [id], onDelete: SetNull)
+  sourceThreadId String?
+  sourceThread   ChatThread? @relation(fields: [sourceThreadId], references: [id], onDelete: SetNull)
+
+  // Optional ties to entities — used for relevance scoring against anchors
+  relatedCategoryIds String[] @default([])
+  relatedGoalIds     String[] @default([])
+  relatedTaskIds     String[] @default([])
+
+  // For COMMITMENT kind — controls how hard the agent pushes back when a
+  // request conflicts. NORMAL = mention in reply but proceed.
+  // BLOCK = refuse to act until the conflict is resolved.
+  enforceLevel CommitmentEnforce @default(NORMAL)
+
+  // Lifecycle
+  supersedesId    String?      @unique
+  supersedes      Observation? @relation("ObservationSupersedes", fields: [supersedesId], references: [id], onDelete: SetNull)
+  supersededBy    Observation? @relation("ObservationSupersedes")
+  supersededAt    DateTime?
+
+  archived  Boolean   @default(false)
+  expiresAt DateTime?
+
+  // User affirmation
+  confirmedByUser Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, kind, supersededAt, archived])
+  @@index([userId, createdAt])
+  @@map("observations")
+}
+
+enum ObservationKind {
+  FACT
+  PATTERN
+  PREFERENCE
+  COMMITMENT
+  INSIGHT
+  CONCERN
+}
+
+enum CommitmentEnforce {
+  NORMAL
+  BLOCK
+}
+
+// First-class container for long-running narrative initiatives that aren't
+// Goals (no single target) and aren't Tasks (multi-month/year, ongoing).
+// Examples: a VA disability claim, a custody case, a job search, a renovation.
+//
+// The Body field is markdown — the accumulated history, drafts, status
+// narrative. The agent reads it for context and can append updates via
+// update_project_body MCP tool.
+model Project {
+  id          String  @id @default(uuid())
+  userId      String
+  user        User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  title       String
+  description String?
+  body        String  @default("") // Markdown — the accumulated content
+
+  status ProjectStatus @default(ACTIVE)
+
+  primaryCategoryId String?
+  primaryCategory   Category? @relation(fields: [primaryCategoryId], references: [id], onDelete: SetNull)
+
+  // Additional categories this project lives under. Primary keeps the lead
+  // role (badge, default anchor); secondaries widen anchor-relevance match.
+  // Example: VA Disability is primary=Health, secondary=[Finance].
+  secondaryCategoryIds String[] @default([])
+
+  // When set, the daily agent surfaces the project if the date approaches.
+  nextActionAt   DateTime?
+  nextActionNote String?
+
+  // If true, project appears in agent context on every run regardless of
+  // chat anchor. Use for high-stakes, long-running situations.
+  alwaysInContext Boolean @default(false)
+
+  archived Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  attachments ProjectAttachment[]
+
+  @@index([userId, status, archived])
+  @@index([userId, updatedAt])
+  @@map("projects")
+}
+
+enum ProjectStatus {
+  ACTIVE
+  PAUSED
+  COMPLETE
+  ARCHIVED
+}
+
+// Agent-curated "Today" — a header markdown blurb plus an ordered list of
+// entity IDs to surface on the Today page. Daily prioritization run sets it;
+// user sees the agent's curated forefront.
+// Daily 1-5 self-rating of energy/satisfaction. Optional note.
+// One row per (userId, dateKey) — dateKey is YYYY-MM-DD in user tz so the
+// prompt is anchored to the user's day, not UTC midnight.
+model DayRating {
+  id        String @id @default(uuid())
+  userId    String
+  user      User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  dateKey   String // YYYY-MM-DD in user tz
+  rating    Int    // 1..5
+  note      String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, dateKey])
+  @@index([userId, dateKey])
+  @@map("day_ratings")
+}
+
+model TodayCuration {
+  id     String @id @default(uuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Markdown shown above the pinned items. 1-3 sentences. "What I'd focus on today."
+  headline String @default("")
+
+  // Ordered list of refs. Shape:
+  //   [{ type: "task"|"event"|"project", id: "...", reason: "short note" }]
+  pinned Json @default("[]")
+
+  // Provenance — which agent run wrote this curation.
+  sourceRunId String?
+  sourceRun   AgentRun? @relation(fields: [sourceRunId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("today_curations")
+}
+
+// File attached to a project. Original is stored on disk under a Docker
+// volume mount; we record extracted text alongside so the agent doesn't need
+// to re-read the file on every context build.
+model ProjectAttachment {
+  id        String  @id @default(uuid())
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  userId    String
+
+  fileName    String  // original name from the user
+  contentType String  // MIME type
+  fileSize    Int     // bytes
+  storagePath String  // relative to ATTACHMENTS_DIR
+
+  // Output of the extraction pipeline (text for .txt/.md/.docx/.pdf; vision
+  // description for images). Null if extraction failed.
+  extractedText String?
+  extractionError String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([projectId])
+  @@index([userId])
+  @@map("project_attachments")
+}
+
+enum ProposedActionKind {
+  POST_NOTE
+  CREATE_TASK
+  UPDATE_TASK
+  COMPLETE_TASK
+  ADJUST_WEIGHT
+  RESCHEDULE_TASK
+  LINK_TASK_TO_EVENT
+  ARCHIVE_TASK
+  DECLINE_MEETING
+  CREATE_GOAL
+  CREATE_PROJECT
+  UPDATE_PROJECT
+}
+
+enum ProposedActionMode {
+  AUTO
+  REVIEW
+  ASK
+}
+
+enum ProposedActionStatus {
+  PENDING
+  APPROVED
+  DENIED
+  EXECUTED
+  EXPIRED
+  FAILED
+}
+
+model ProposedAction {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  agentRunId String
+  agentRun   AgentRun @relation(fields: [agentRunId], references: [id], onDelete: Cascade)
+
+  kind   ProposedActionKind
+  mode   ProposedActionMode
+  status ProposedActionStatus @default(PENDING)
+
+  // Entity targeted by the action: ("task", taskId), ("event", eventId), etc.
+  targetType String?
+  targetId   String?
+
+  // Reasoning the agent gave the user — shown in the review UI.
+  rationale String
+  // Structured payload — what to do exactly. Shape depends on kind.
+  payload   Json
+
+  expiresAt  DateTime?
+  decidedAt  DateTime?
+  executedAt DateTime?
+  error      String?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, status])
+  @@index([agentRunId])
+  @@map("proposed_actions")
+}

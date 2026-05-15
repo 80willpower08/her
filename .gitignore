@@ -1,0 +1,52 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+build/
+*.tsbuildinfo
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Caddy local data
+caddy_data/
+caddy_config/
+
+# Prisma
+apps/api/prisma/migrations/dev.db*
+
+# Local-only operational notes (contains PII — wife/kids/work emails)
+HANDOFF.md
+
+# Project attachments (PDFs, images uploaded to projects)
+data/
+
+# Database dumps + archives created during deployment
+*-dump.bin
+*.tar.gz
+*.dump
+
+# Salvage / archived prior versions
+_salvage/
+archive-v1-task-companion/
+
+# Local Claude credentials at repo root (NOT apps/agent/.claude — the agent needs that)
+/.claude/

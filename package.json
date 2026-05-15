@@ -1,0 +1,34 @@
+{
+  "name": "time-keeper",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Personal AI time-keeper — multi-source calendar/task agent on TrueNAS",
+  "packageManager": "pnpm@10.33.3",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "docker compose up",
+    "dev:detached": "docker compose up -d",
+    "down": "docker compose down",
+    "down:volumes": "docker compose down -v",
+    "logs": "docker compose logs -f",
+    "build": "docker compose build",
+    "rebuild": "docker compose build --no-cache",
+    "ps": "docker compose ps",
+    "db:migrate": "pnpm --filter @time-keeper/api exec prisma migrate dev",
+    "db:reset": "pnpm --filter @time-keeper/api exec prisma migrate reset",
+    "db:studio": "pnpm --filter @time-keeper/api exec prisma studio",
+    "hash-password": "pnpm --filter @time-keeper/api exec tsx scripts/hash-password.ts"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@prisma/client",
+      "@prisma/engines",
+      "bcrypt",
+      "esbuild",
+      "msgpackr-extract",
+      "prisma"
+    ]
+  }
+}

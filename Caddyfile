@@ -1,0 +1,31 @@
+# Internal reverse proxy for local dev.
+# Public TLS is handled upstream by your existing Cloudflare Tunnel server.
+
+:8080 {
+	# API routes
+	handle /api/* {
+		reverse_proxy api:3001
+	}
+
+	handle /healthz {
+		reverse_proxy api:3001
+	}
+
+	# ntfy passthrough (optional convenience for testing)
+	handle /ntfy/* {
+		uri strip_prefix /ntfy
+		reverse_proxy ntfy:80
+	}
+
+	# Everything else → web (Vite dev server)
+	handle {
+		reverse_proxy web:5173
+	}
+
+	encode gzip
+
+	log {
+		output stdout
+		format console
+	}
+}

@@ -1,0 +1,32 @@
+# Critical: do not copy host node_modules into Docker build context.
+# pnpm's symlinks point at the host's .pnpm store, which doesn't exist
+# inside the container. Symlinks in COPYed node_modules silently break.
+**/node_modules
+**/.pnpm-store
+
+# Build outputs
+**/dist
+**/build
+**/*.tsbuildinfo
+
+# Env / secrets
+.env
+.env.local
+.env.*.local
+
+# Logs
+**/*.log
+
+# IDE / OS
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+
+# Git
+.git
+.gitignore
+
+# Old project
+archive-v1-task-companion
+_salvage

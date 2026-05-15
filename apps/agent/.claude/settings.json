@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__time-keeper__propose_post_note",
+      "mcp__time-keeper__propose_link_task_to_event",
+      "mcp__time-keeper__propose_adjust_weight",
+      "mcp__time-keeper__propose_reschedule_task",
+      "mcp__time-keeper__propose_create_task",
+      "mcp__time-keeper__propose_create_goal",
+      "mcp__time-keeper__record_run_summary",
+      "mcp__time-keeper__post_chat_reply",
+      "mcp__time-keeper__record_observation",
+      "mcp__time-keeper__supersede_observation",
+      "mcp__time-keeper__archive_observation",
+      "mcp__time-keeper__propose_create_project",
+      "mcp__time-keeper__propose_update_project",
+      "mcp__time-keeper__update_project_body",
+      "mcp__time-keeper__read_project_body",
+      "mcp__time-keeper__read_data_source_snapshot",
+      "mcp__time-keeper__set_today_curation"
+    ],
+    "deny": ["Bash", "Edit", "Write", "WebFetch", "WebSearch"]
+  },
+  "outputStyle": "concise"
+}
