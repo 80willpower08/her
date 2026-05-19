@@ -226,8 +226,30 @@ function runClaude(prompt: string, signal: AbortSignal): Promise<{ stdout: strin
     child.on('close', (code) => resolve({ stdout, stderr, code: code ?? -1 }));
 
     signal.addEventListener('abort', () => child.kill('SIGTERM'));
-    child.stdin.write(prompt);
-    child.stdin.end();
+
+    // Crucially: handle stdin errors. If claude exits early (auth fail,
+    // bad-prompt rejection, etc.) the write below EPIPEs. Without a listener
+    // Node treats the EPIPE as fatal and crashes the entire worker process,
+    // which is far worse than just letting that one run fail.
+    child.stdin.on('error', (err) => {
+      // Best-effort: capture the error into stderr buffer so it shows up in
+      // the rawOutput diagnostics. close handler still resolves the promise.
+      stderr += `\n[stdin error: ${err instanceof Error ? err.message : String(err)}]`;
+    });
+
+    try {
+      child.stdin.write(prompt, (err) => {
+        // write callback fires on flush; nothing to do here unless we need
+        // additional logging. The 'error' listener above covers EPIPE.
+        if (err) {
+          stderr += `\n[stdin write callback: ${err.message}]`;
+        }
+      });
+      child.stdin.end();
+    } catch (err) {
+      // Synchronous throw — e.g., writing to an already-closed pipe.
+      stderr += `\n[stdin sync throw: ${err instanceof Error ? err.message : String(err)}]`;
+    }
   });
 }
 
