@@ -206,53 +206,44 @@ function buildChatPrompt(
   ].join('\n');
 }
 
-/** Run claude -p in the prepared workspace, capture stdout.
- *
- * Important: the prompt is written to a temp file and read back via shell
- * substitution rather than piped via stdin. Claude's stdin reader has a
- * buffer that closes early on large prompts (the agent context can easily
- * hit 100-200KB), which produces an EPIPE on write and silent zero-output
- * exits. Reading from disk sidesteps that entirely.
- */
-async function runClaude(prompt: string, signal: AbortSignal): Promise<{ stdout: string; stderr: string; code: number }> {
-  const { writeFile, unlink, mkdtemp } = await import('node:fs/promises');
-  const { join } = await import('node:path');
-  const { tmpdir } = await import('node:os');
+/** Run claude -p in the prepared workspace, capture stdout. */
+function runClaude(prompt: string, signal: AbortSignal): Promise<{ stdout: string; stderr: string; code: number }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      CLAUDE_BIN,
+      ['-p', '--output-format', 'json', '--model', CLAUDE_MODEL],
+      {
+        cwd: AGENT_WORKSPACE,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env: { ...process.env, IS_SANDBOX: '1' },
+      }
+    );
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (d) => (stdout += d.toString()));
+    child.stderr.on('data', (d) => (stderr += d.toString()));
+    child.on('error', reject);
+    child.on('close', (code) => resolve({ stdout, stderr, code: code ?? -1 }));
 
-  const dir = await mkdtemp(join(tmpdir(), 'claude-prompt-'));
-  const promptPath = join(dir, 'prompt.txt');
-  await writeFile(promptPath, prompt, 'utf-8');
+    signal.addEventListener('abort', () => child.kill('SIGTERM'));
 
-  try {
-    return await new Promise<{ stdout: string; stderr: string; code: number }>((resolve, reject) => {
-      // Pass the prompt as the positional arg via shell command substitution.
-      // claude -p expects either stdin or a positional prompt; --append-system-prompt
-      // file flag also works on newer versions but isn't universal.
-      // We use sh -c so we can do "$(cat …)" — avoids any node-side buffering.
-      const child = spawn(
-        'sh',
-        ['-c', `${CLAUDE_BIN} -p --output-format json --model "${CLAUDE_MODEL}" "$(cat "$0")"`, promptPath],
-        {
-          cwd: AGENT_WORKSPACE,
-          stdio: ['ignore', 'pipe', 'pipe'],
-          env: { ...process.env, IS_SANDBOX: '1' },
-        }
-      );
-      let stdout = '';
-      let stderr = '';
-      child.stdout.on('data', (d) => (stdout += d.toString()));
-      child.stderr.on('data', (d) => (stderr += d.toString()));
-      child.on('error', reject);
-      child.on('close', (code) => resolve({ stdout, stderr, code: code ?? -1 }));
-
-      signal.addEventListener('abort', () => child.kill('SIGTERM'));
+    // Defensive stdin error handler — when claude exits early (e.g., auth
+    // rejection), the write below will EPIPE. Without a listener Node
+    // crashes the worker process. With one, we capture the failure into
+    // stderr and let close handler complete normally.
+    child.stdin.on('error', (err) => {
+      stderr += `\n[stdin error: ${err instanceof Error ? err.message : String(err)}]`;
     });
-  } finally {
-    // Clean up temp dir regardless of outcome
+
     try {
-      await unlink(promptPath);
-    } catch { /* best-effort */ }
-  }
+      child.stdin.write(prompt, (err) => {
+        if (err) stderr += `\n[stdin write callback: ${err.message}]`;
+      });
+      child.stdin.end();
+    } catch (err) {
+      stderr += `\n[stdin sync throw: ${err instanceof Error ? err.message : String(err)}]`;
+    }
+  });
 }
 
 interface ClaudeOutput {
