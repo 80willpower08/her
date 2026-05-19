@@ -29,6 +29,19 @@ function formatLocal(d: Date, timeZone: string): string {
   }).format(d);
 }
 
+/** Format an all-day event date as "Mon May 13" — interprets the date in UTC
+ * because Google/MS store all-day events as midnight UTC on the calendar date
+ * (so May 13 becomes 2026-05-13T00:00:00Z, NOT a local-tz May 13). Converting
+ * that through the user's tz shifts the day backward in CDT/CST. */
+function formatLocalAllDay(d: Date): string {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: 'UTC',
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+  }).format(d);
+}
+
 /** Structured input the agent reasons over. Curated, not freeform. */
 export interface AgentContext {
   kind: AgentKind;
@@ -326,8 +339,13 @@ export async function buildAgentContext(
     title: e.title,
     startsAt: e.startsAt.toISOString(),
     endsAt: e.endsAt.toISOString(),
-    startsAtLocal: formatLocal(e.startsAt, tz),
-    endsAtLocal: formatLocal(e.endsAt, tz),
+    allDay: e.allDay,
+    startsAtLocal: e.allDay
+      ? formatLocalAllDay(e.startsAt)
+      : formatLocal(e.startsAt, tz),
+    endsAtLocal: e.allDay
+      ? formatLocalAllDay(e.endsAt)
+      : formatLocal(e.endsAt, tz),
     accountLabel: labelForEvent(e),
     categoryId: sourceFor(e)?.categoryId ?? null,
     notes: notesByEventId.get(e.id) ?? [],

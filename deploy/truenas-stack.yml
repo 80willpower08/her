@@ -23,6 +23,7 @@ services:
       POSTGRES_USER: her
       POSTGRES_PASSWORD: <POSTGRES_PASSWORD>
       POSTGRES_DB: her
+      TZ: America/Chicago
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U her -d her']
       interval: 5s
@@ -51,6 +52,7 @@ services:
     environment:
       DATABASE_URL: postgresql://her:<POSTGRES_PASSWORD>@postgres:5432/her
       REDIS_URL: redis://redis:6379
+      TZ: America/Chicago
       JWT_SECRET: <JWT_SECRET>
       ADMIN_USERNAME: <YOUR_LOGIN_USERNAME>
       # Generate with: pnpm hash-password 'your-password'
@@ -88,6 +90,7 @@ services:
     environment:
       DATABASE_URL: postgresql://her:<POSTGRES_PASSWORD>@postgres:5432/her
       REDIS_URL: redis://redis:6379
+      TZ: America/Chicago
       API_INTERNAL_URL: http://api:3001
       INTERNAL_API_SECRET: <INTERNAL_API_SECRET>
       DAILY_AGENT_CRON: 0 8 * * *
@@ -104,6 +107,7 @@ services:
     environment:
       DATABASE_URL: postgresql://her:<POSTGRES_PASSWORD>@postgres:5432/her
       REDIS_URL: redis://redis:6379
+      TZ: America/Chicago
       API_INTERNAL_URL: http://api:3001
       INTERNAL_API_SECRET: <INTERNAL_API_SECRET>
       DAILY_AGENT_TZ: America/Chicago
@@ -123,6 +127,7 @@ services:
     depends_on:
       - api
     environment:
+      TZ: America/Chicago
       VITE_API_URL: https://her.phnet.me
       VITE_VAPID_PUBLIC_KEY: <VAPID_PUBLIC_KEY>
 

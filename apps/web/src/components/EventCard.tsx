@@ -14,8 +14,20 @@ interface EventCardProps {
   accountLabel?: string;
 }
 
+// All-day events come back as 2026-05-13T00:00:00Z from Google/MS. Naive
+// new Date(iso) parses that as midnight UTC, which becomes 7pm the previous
+// day in CDT/CST — making the event appear to fall on the wrong day. For
+// all-day events we work off the date portion of the ISO directly so the
+// calendar date is preserved regardless of viewer timezone.
+function dateFromAllDayIso(iso: string): Date {
+  // 'YYYY-MM-DDT00:00:00Z' → construct a local-tz Date at noon on that date.
+  // Noon dodges DST boundary edge cases for "today/tomorrow" comparisons.
+  const ymd = iso.slice(0, 10).split('-').map((n) => parseInt(n, 10));
+  return new Date(ymd[0], ymd[1] - 1, ymd[2], 12, 0, 0);
+}
+
 function formatTime(iso: string, allDay: boolean): string {
-  const d = new Date(iso);
+  const d = allDay ? dateFromAllDayIso(iso) : new Date(iso);
   if (allDay) {
     if (isToday(d)) return 'All day';
     if (isTomorrow(d)) return 'Tomorrow, all day';

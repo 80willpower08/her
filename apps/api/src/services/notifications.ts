@@ -188,19 +188,25 @@ async function sendNtfy(rec: Notification): Promise<Notification> {
       data: { status: 'FAILED', error: 'NTFY_TOPIC not configured' },
     });
   }
-  const url = `${env.ntfyUrl.replace(/\/+$/, '')}/${env.ntfyTopic}`;
-  const headers: Record<string, string> = {
-    'Title': rec.title,
-    'Priority': rec.priority === 'URGENT' ? '5' : rec.priority === 'LOW' ? '2' : '3',
-    'Tags': rec.kind.toLowerCase(),
+  // ntfy's HTTP-header-based publish only accepts Latin-1 (chars 0-255), which
+  // breaks on em-dashes, smart quotes, emoji, etc. The JSON publish API is
+  // UTF-8 safe — same endpoint, just POST a JSON body to /.
+  const url = env.ntfyUrl.replace(/\/+$/, '');
+  const body = {
+    topic: env.ntfyTopic,
+    title: rec.title,
+    message: rec.body,
+    priority:
+      rec.priority === 'URGENT' ? 5 : rec.priority === 'LOW' ? 2 : 3,
+    tags: [rec.kind.toLowerCase()],
+    ...(rec.url ? { click: rec.url } : {}),
   };
-  if (rec.url) headers['Click'] = rec.url;
 
   try {
     const res = await fetch(url, {
       method: 'POST',
-      headers,
-      body: rec.body,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
     });
     if (!res.ok) throw new Error(`ntfy HTTP ${res.status}`);
     return prisma.notification.update({
