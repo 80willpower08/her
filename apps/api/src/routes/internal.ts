@@ -7,6 +7,7 @@ import { prisma } from '../prisma.js';
 import { ingestGoogleCalendar } from '../services/calendar-ingestion.js';
 import { ingestGmail } from '../services/gmail-ingestion.js';
 import { ingestMicrosoftCalendar } from '../services/microsoft-calendar.js';
+import { ingestOutlookMail } from '../services/outlook-mail-ingestion.js';
 import { autoHideAvailabilityCalendars } from '../services/calendar-source-detect.js';
 import { dispatchDueReminders } from '../services/reminders.js';
 import { findDueSheets, findSheetsNeedingReminder, syncSheet } from '../services/sheets.js';
@@ -55,10 +56,14 @@ export const internalRoutes: FastifyPluginAsync = async (app) => {
     }
     if (account.provider === 'MICROSOFT') {
       const calendarResult = await ingestMicrosoftCalendar(account);
+      const hasMailScope = account.scopes.some(
+        (s) => s.toLowerCase() === 'mail.read' || s.toLowerCase().endsWith('/mail.read')
+      );
+      const mailResult = hasMailScope ? await ingestOutlookMail(account) : null;
       const detect = calendarResult.ok
         ? await autoHideAvailabilityCalendars(account.id, account.userId)
         : { autoHidden: 0 };
-      return { result: calendarResult, detect };
+      return { result: calendarResult, mail: mailResult ?? undefined, detect };
     }
     return reply.badRequest(`Unsupported provider: ${account.provider}`);
   });
