@@ -135,9 +135,11 @@ services:
     ports:
       - '8080:8080'
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
       - caddy-config:/config
+    configs:
+      - source: caddyfile
+        target: /etc/caddy/Caddyfile
 
   ntfy:
     image: binwiederhier/ntfy:latest
@@ -156,3 +158,34 @@ volumes:
   ntfy-config: {}
   claude-credentials: {}
   claude-config: {}
+
+configs:
+  # Inlined Caddyfile — defines how Caddy routes requests on :8080.
+  # Cloudflare Tunnel terminates TLS upstream and forwards HTTP here.
+  caddyfile:
+    content: |
+      :8080 {
+        handle /api/* {
+          reverse_proxy api:3001
+        }
+
+        handle /healthz {
+          reverse_proxy api:3001
+        }
+
+        handle /ntfy/* {
+          uri strip_prefix /ntfy
+          reverse_proxy ntfy:80
+        }
+
+        handle {
+          reverse_proxy web:5173
+        }
+
+        encode gzip
+
+        log {
+          output stdout
+          format console
+        }
+      }
