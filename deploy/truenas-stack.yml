@@ -42,7 +42,7 @@ services:
       retries: 10
 
   api:
-    image: ghcr.io/<GITHUB_OWNER_LOWERCASE>/her-api:latest
+    image: ghcr.io/80willpower08/her-api:latest
     pull_policy: always
     restart: unless-stopped
     depends_on:
@@ -79,7 +79,7 @@ services:
       - attachments:/data/attachments
 
   worker:
-    image: ghcr.io/<GITHUB_OWNER_LOWERCASE>/her-worker:latest
+    image: ghcr.io/80willpower08/her-worker:latest
     pull_policy: always
     restart: unless-stopped
     depends_on:
@@ -95,7 +95,7 @@ services:
       NODE_ENV: production
 
   agent:
-    image: ghcr.io/<GITHUB_OWNER_LOWERCASE>/her-agent:latest
+    image: ghcr.io/80willpower08/her-agent:latest
     pull_policy: always
     restart: unless-stopped
     depends_on:
@@ -117,7 +117,7 @@ services:
       - claude-config:/root/.claude.json
 
   web:
-    image: ghcr.io/<GITHUB_OWNER_LOWERCASE>/her-web:latest
+    image: ghcr.io/80willpower08/her-web:latest
     pull_policy: always
     restart: unless-stopped
     depends_on:
