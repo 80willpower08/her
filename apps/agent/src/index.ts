@@ -357,6 +357,15 @@ async function handleJob(job: Job<AgentJobData>) {
     clearTimeout(timeout);
   }
 
+  log('claude completed', {
+    code,
+    stdoutBytes: stdout.length,
+    stderrBytes: stderr.length,
+    stdoutPreview: stdout.slice(0, 400),
+    stderrPreview: stderr.slice(0, 400),
+    promptBytes: prompt.length,
+  });
+
   if (code !== 0) {
     log('claude exited non-zero', { code, stderr: stderr.slice(0, 500) });
     await api(`/internal/agent-runs/${run.id}`, {
@@ -368,6 +377,20 @@ async function handleJob(job: Job<AgentJobData>) {
       },
     });
     return { ok: false, error: `claude exit ${code}` };
+  }
+
+  // Empty stdout despite code 0 — that's not a success, that's a silent
+  // failure. Mark it ERROR with stderr so it doesn't pretend to have worked.
+  if (stdout.trim().length === 0) {
+    await api(`/internal/agent-runs/${run.id}`, {
+      method: 'PATCH',
+      body: {
+        status: 'ERROR',
+        error: `claude exited 0 with empty stdout. stderr: ${stderr.slice(0, 500) || '(also empty)'}`,
+        rawOutput: stderr || '',
+      },
+    });
+    return { ok: false, error: 'claude empty stdout' };
   }
 
   // 4) Parse claude's wrapper output for token usage. Decision content is
