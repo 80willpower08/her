@@ -112,6 +112,12 @@ services:
       INTERNAL_API_SECRET: <INTERNAL_API_SECRET>
       DAILY_AGENT_TZ: America/Chicago
       NODE_ENV: production
+      # Tell claude binary where its credentials + config live. Without these
+      # vars, the binary appears to silently bail (exit 0, no stdout, no
+      # stderr) even when /root/.claude/.credentials.json exists. Required
+      # empirically for `claude -p` to actually produce output.
+      CLAUDE_CREDENTIALS_DIR: /root/.claude
+      CLAUDE_CONFIG_FILE: /root/.claude.json
     volumes:
       # Mount your Claude Code subscription credentials so the agent can run
       # `claude -p` without an API key. Create these on the TrueNAS host by
