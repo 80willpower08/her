@@ -206,51 +206,53 @@ function buildChatPrompt(
   ].join('\n');
 }
 
-/** Run claude -p in the prepared workspace, capture stdout. */
-function runClaude(prompt: string, signal: AbortSignal): Promise<{ stdout: string; stderr: string; code: number }> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(
-      CLAUDE_BIN,
-      ['-p', '--output-format', 'json', '--model', CLAUDE_MODEL],
-      {
-        cwd: AGENT_WORKSPACE,
-        stdio: ['pipe', 'pipe', 'pipe'],
-        env: { ...process.env, IS_SANDBOX: '1' },
-      }
-    );
-    let stdout = '';
-    let stderr = '';
-    child.stdout.on('data', (d) => (stdout += d.toString()));
-    child.stderr.on('data', (d) => (stderr += d.toString()));
-    child.on('error', reject);
-    child.on('close', (code) => resolve({ stdout, stderr, code: code ?? -1 }));
+/** Run claude -p in the prepared workspace, capture stdout.
+ *
+ * Important: the prompt is written to a temp file and read back via shell
+ * substitution rather than piped via stdin. Claude's stdin reader has a
+ * buffer that closes early on large prompts (the agent context can easily
+ * hit 100-200KB), which produces an EPIPE on write and silent zero-output
+ * exits. Reading from disk sidesteps that entirely.
+ */
+async function runClaude(prompt: string, signal: AbortSignal): Promise<{ stdout: string; stderr: string; code: number }> {
+  const { writeFile, unlink, mkdtemp } = await import('node:fs/promises');
+  const { join } = await import('node:path');
+  const { tmpdir } = await import('node:os');
 
-    signal.addEventListener('abort', () => child.kill('SIGTERM'));
+  const dir = await mkdtemp(join(tmpdir(), 'claude-prompt-'));
+  const promptPath = join(dir, 'prompt.txt');
+  await writeFile(promptPath, prompt, 'utf-8');
 
-    // Crucially: handle stdin errors. If claude exits early (auth fail,
-    // bad-prompt rejection, etc.) the write below EPIPEs. Without a listener
-    // Node treats the EPIPE as fatal and crashes the entire worker process,
-    // which is far worse than just letting that one run fail.
-    child.stdin.on('error', (err) => {
-      // Best-effort: capture the error into stderr buffer so it shows up in
-      // the rawOutput diagnostics. close handler still resolves the promise.
-      stderr += `\n[stdin error: ${err instanceof Error ? err.message : String(err)}]`;
-    });
-
-    try {
-      child.stdin.write(prompt, (err) => {
-        // write callback fires on flush; nothing to do here unless we need
-        // additional logging. The 'error' listener above covers EPIPE.
-        if (err) {
-          stderr += `\n[stdin write callback: ${err.message}]`;
+  try {
+    return await new Promise<{ stdout: string; stderr: string; code: number }>((resolve, reject) => {
+      // Pass the prompt as the positional arg via shell command substitution.
+      // claude -p expects either stdin or a positional prompt; --append-system-prompt
+      // file flag also works on newer versions but isn't universal.
+      // We use sh -c so we can do "$(cat …)" — avoids any node-side buffering.
+      const child = spawn(
+        'sh',
+        ['-c', `${CLAUDE_BIN} -p --output-format json --model "${CLAUDE_MODEL}" "$(cat "$0")"`, promptPath],
+        {
+          cwd: AGENT_WORKSPACE,
+          stdio: ['ignore', 'pipe', 'pipe'],
+          env: { ...process.env, IS_SANDBOX: '1' },
         }
-      });
-      child.stdin.end();
-    } catch (err) {
-      // Synchronous throw — e.g., writing to an already-closed pipe.
-      stderr += `\n[stdin sync throw: ${err instanceof Error ? err.message : String(err)}]`;
-    }
-  });
+      );
+      let stdout = '';
+      let stderr = '';
+      child.stdout.on('data', (d) => (stdout += d.toString()));
+      child.stderr.on('data', (d) => (stderr += d.toString()));
+      child.on('error', reject);
+      child.on('close', (code) => resolve({ stdout, stderr, code: code ?? -1 }));
+
+      signal.addEventListener('abort', () => child.kill('SIGTERM'));
+    });
+  } finally {
+    // Clean up temp dir regardless of outcome
+    try {
+      await unlink(promptPath);
+    } catch { /* best-effort */ }
+  }
 }
 
 interface ClaudeOutput {
