@@ -89,6 +89,11 @@ services:
       dockerfile: apps/agent/Dockerfile
     restart: unless-stopped
     env_file: .env
+    environment:
+      # Image sets HOME=/data/home; in dev we override back to /root so the
+      # existing host bind-mounts of ~/.claude/ and ~/.claude.json continue
+      # to work at their conventional locations.
+      HOME: /root
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
