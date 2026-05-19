@@ -117,8 +117,12 @@ services:
       # `claude -p` without an API key. Create these on the TrueNAS host by
       # running `claude /login` as the user that owns the directory below,
       # OR copy them over from your workstation.
+      # Only mount /root/.claude (the directory). Do NOT mount a volume at
+      # /root/.claude.json — that's a file, not a directory, and Docker
+      # named-volumes would create it as a directory which breaks claude
+      # binary startup (EISDIR on workspace-config read). Workspace state
+      # regenerates automatically inside the container's writable layer.
       - claude-credentials:/root/.claude
-      - claude-config:/root/.claude.json
 
   web:
     image: ghcr.io/80willpower08/her-web:latest
@@ -162,7 +166,6 @@ volumes:
   ntfy-data: {}
   ntfy-config: {}
   claude-credentials: {}
-  claude-config: {}
 
 configs:
   # Inlined Caddyfile — defines how Caddy routes requests on :8080.
