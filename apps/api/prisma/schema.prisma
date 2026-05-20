@@ -730,6 +730,7 @@ enum EmailSource {
   GMAIL
   OUTLOOK
   SHARED
+  SMS
 }
 
 enum EmailTriageStatus {

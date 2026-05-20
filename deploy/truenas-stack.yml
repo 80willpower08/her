@@ -55,8 +55,15 @@ services:
       TZ: America/Chicago
       JWT_SECRET: <JWT_SECRET>
       ADMIN_USERNAME: <YOUR_LOGIN_USERNAME>
-      # Generate with: pnpm hash-password 'your-password'
-      ADMIN_PASSWORD_HASH: <ADMIN_PASSWORD_HASH>
+      # CRITICAL: TrueNAS Apps' YAML pipeline mangles `$`-characters in env
+      # values regardless of escaping (`$$`, `\$`, single-quotes, etc. all
+      # fail). Bcrypt hashes contain four `$` signs, so use the base64 form
+      # below instead — the api decodes it at startup.
+      #
+      # Generate the value with:
+      #   pnpm hash-password 'your-password'             # gives $2b$12$...
+      #   echo -n '$2b$12$...' | base64                  # gives ADMIN_PASSWORD_HASH_B64
+      ADMIN_PASSWORD_HASH_B64: <ADMIN_PASSWORD_HASH_B64>
       API_PORT: '3001'
       NODE_ENV: production
       PUBLIC_ORIGIN: https://her.phnet.me

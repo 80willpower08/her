@@ -1,8 +1,11 @@
 // Share-target ingestion: receives manually-shared payloads from the PWA's
-// service worker and stores them as EmailMessage rows for triage.
+// service worker AND external ingestors (e.g. Tasker on phone for SMS), and
+// stores them as EmailMessage rows for triage.
 
 import { randomUUID } from 'node:crypto';
-import type { FastifyPluginAsync } from 'fastify';
+import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
+import { SINGLE_USER_ID } from '../auth.js';
+import { env } from '../env.js';
 import { prisma } from '../prisma.js';
 
 const ShareInputSchema = {
@@ -14,6 +17,12 @@ const ShareInputSchema = {
     url: { type: 'string', maxLength: 2000 },
     receivedAt: { type: 'string', format: 'date-time' },
     externalAccountId: { type: ['string', 'null'] },
+    // Explicit source. Defaults to SHARED if omitted.
+    source: { type: 'string', enum: ['SHARED', 'SMS'] },
+    // For SMS (and other future external ingests) the caller knows the
+    // sender directly — phone number / contact name from Android.
+    fromAddress: { type: 'string', maxLength: 300 },
+    fromName: { type: 'string', maxLength: 200 },
   },
   additionalProperties: false,
 } as const;
@@ -40,7 +49,29 @@ function inferFromAddress(text: string): { name: string | null; address: string 
 }
 
 export const shareRoutes: FastifyPluginAsync = async (app) => {
-  app.addHook('preHandler', app.authenticate);
+  // POST /api/share allows two auth modes:
+  //   1. JWT (PWA share-target flow from the browser)
+  //   2. X-Ingest-Token (Tasker SMS forward, other server-to-server clients)
+  async function shareIngestAuth(req: FastifyRequest, reply: FastifyReply) {
+    const headerToken = req.headers['x-ingest-token'];
+    if (
+      env.ingestToken &&
+      typeof headerToken === 'string' &&
+      headerToken === env.ingestToken
+    ) {
+      // Synthesize req.user so the handler reads identically to JWT auth.
+      (req as unknown as { user: { userId: string; username: string } }).user = {
+        userId: SINGLE_USER_ID,
+        username: env.adminUsername,
+      };
+      return;
+    }
+    try {
+      await req.jwtVerify();
+    } catch {
+      return reply.unauthorized('Authentication required');
+    }
+  }
 
   app.post<{
     Body: {
@@ -49,135 +80,162 @@ export const shareRoutes: FastifyPluginAsync = async (app) => {
       url?: string;
       receivedAt?: string;
       externalAccountId?: string | null;
+      source?: 'SHARED' | 'SMS';
+      fromAddress?: string;
+      fromName?: string;
     };
-  }>('/api/share', { schema: { body: ShareInputSchema } }, async (req, reply) => {
-    const { title = '', text = '', url = '', receivedAt, externalAccountId } = req.body;
+  }>(
+    '/api/share',
+    { schema: { body: ShareInputSchema }, preHandler: shareIngestAuth },
+    async (req, reply) => {
+      const {
+        title = '',
+        text = '',
+        url = '',
+        receivedAt,
+        externalAccountId,
+        source = 'SHARED',
+        fromAddress,
+        fromName,
+      } = req.body;
 
-    if (!title.trim() && !text.trim() && !url.trim()) {
-      return reply.badRequest('Empty share payload');
+      if (!title.trim() && !text.trim() && !url.trim()) {
+        return reply.badRequest('Empty share payload');
+      }
+
+      // If the caller supplied an explicit sender, use it. Otherwise fall back
+      // to extracting from the body (legacy "from foo@bar.com" pattern).
+      const sender = fromAddress
+        ? { name: fromName ?? null, address: fromAddress }
+        : inferFromAddress(text);
+
+      const subject =
+        title.trim() || (text.split('\n')[0] || '').slice(0, 200) || '(shared item)';
+
+      if (externalAccountId) {
+        const owns = await prisma.externalAccount.findFirst({
+          where: { id: externalAccountId, userId: req.user.userId },
+          select: { id: true },
+        });
+        if (!owns) return reply.badRequest('Unknown externalAccountId');
+      }
+
+      const message = await prisma.emailMessage.create({
+        data: {
+          userId: req.user.userId,
+          externalAccountId: externalAccountId ?? null,
+          source,
+          sourceMessageId: randomUUID(),
+          fromAddress: sender.address,
+          fromName: sender.name,
+          toAddresses: [],
+          subject,
+          snippet: text.slice(0, 200) || null,
+          bodyText: text || null,
+          sourceUrl: url || null,
+          labels: [source],
+          isUnread: true,
+          triageStatus: 'PENDING',
+          receivedAt: receivedAt ? new Date(receivedAt) : new Date(),
+        },
+      });
+
+      return { share: message };
     }
+  );
 
-    const sender = inferFromAddress(text);
-    const subject = title.trim() || (text.split('\n')[0] || '').slice(0, 200) || '(shared item)';
+  // ── Everything below is JWT-only. ─────────────────────────────────────
+  app.register(async (jwt) => {
+    jwt.addHook('preHandler', app.authenticate);
 
-    if (externalAccountId) {
-      const owns = await prisma.externalAccount.findFirst({
-        where: { id: externalAccountId, userId: req.user.userId },
+    jwt.get<{ Params: { id: string } }>('/api/share/:id', async (req, reply) => {
+      const message = await prisma.emailMessage.findFirst({
+        where: { id: req.params.id, userId: req.user.userId },
+      });
+      if (!message) return reply.notFound();
+      return { share: message };
+    });
+
+    jwt.get('/api/share/pending', async (req) => {
+      const pending = await prisma.emailMessage.findMany({
+        where: {
+          userId: req.user.userId,
+          triageStatus: 'PENDING',
+        },
+        orderBy: { receivedAt: 'desc' },
+        take: 50,
+      });
+      return { pending, count: pending.length };
+    });
+
+    // Unified inbox: ingested emails + manually-shared items + SMS.
+    jwt.get<{
+      Querystring: {
+        status?: 'pending' | 'all';
+        source?: 'GMAIL' | 'OUTLOOK' | 'SHARED' | 'SMS' | 'all';
+        accountId?: string;
+        limit?: string;
+      };
+    }>('/api/messages', async (req) => {
+      const limit = Math.min(parseInt(req.query.limit ?? '100', 10), 500);
+      const where: {
+        userId: string;
+        triageStatus?: 'PENDING';
+        source?: 'GMAIL' | 'OUTLOOK' | 'SHARED' | 'SMS';
+        externalAccountId?: string;
+      } = { userId: req.user.userId };
+
+      if (req.query.status === 'pending') where.triageStatus = 'PENDING';
+      if (req.query.source && req.query.source !== 'all') where.source = req.query.source;
+      if (req.query.accountId) where.externalAccountId = req.query.accountId;
+
+      const [messages, pendingCount, byStatus] = await Promise.all([
+        prisma.emailMessage.findMany({
+          where,
+          orderBy: [{ triageStatus: 'asc' }, { receivedAt: 'desc' }],
+          take: limit,
+        }),
+        prisma.emailMessage.count({
+          where: { userId: req.user.userId, triageStatus: 'PENDING' },
+        }),
+        prisma.emailMessage.groupBy({
+          by: ['source'],
+          where: { userId: req.user.userId },
+          _count: { _all: true },
+        }),
+      ]);
+
+      return {
+        messages,
+        pendingCount,
+        bySource: byStatus.map((b) => ({ source: b.source, count: b._count._all })),
+      };
+    });
+
+    jwt.patch<{
+      Params: { id: string };
+      Body: {
+        action: 'CONVERTED_TO_TASK' | 'ATTACHED_TO_GOAL' | 'NOTED' | 'DISCARDED';
+        externalAccountId?: string | null;
+      };
+    }>('/api/share/:id', { schema: { body: TriageInputSchema } }, async (req, reply) => {
+      const existing = await prisma.emailMessage.findFirst({
+        where: { id: req.params.id, userId: req.user.userId },
         select: { id: true },
       });
-      if (!owns) return reply.badRequest('Unknown externalAccountId');
-    }
+      if (!existing) return reply.notFound();
 
-    const message = await prisma.emailMessage.create({
-      data: {
-        userId: req.user.userId,
-        externalAccountId: externalAccountId ?? null,
-        source: 'SHARED',
-        sourceMessageId: randomUUID(),
-        fromAddress: sender.address,
-        fromName: sender.name,
-        toAddresses: [],
-        subject,
-        snippet: text.slice(0, 200) || null,
-        bodyText: text || null,
-        sourceUrl: url || null,
-        labels: ['SHARED'],
-        isUnread: true,
-        triageStatus: 'PENDING',
-        receivedAt: receivedAt ? new Date(receivedAt) : new Date(),
-      },
+      const message = await prisma.emailMessage.update({
+        where: { id: req.params.id },
+        data: {
+          triageStatus: req.body.action,
+          externalAccountId:
+            req.body.externalAccountId !== undefined
+              ? req.body.externalAccountId
+              : undefined,
+        },
+      });
+      return { share: message };
     });
-
-    return { share: message };
-  });
-
-  app.get<{ Params: { id: string } }>('/api/share/:id', async (req, reply) => {
-    const message = await prisma.emailMessage.findFirst({
-      where: { id: req.params.id, userId: req.user.userId },
-    });
-    if (!message) return reply.notFound();
-    return { share: message };
-  });
-
-  app.get('/api/share/pending', async (req) => {
-    const pending = await prisma.emailMessage.findMany({
-      where: {
-        userId: req.user.userId,
-        triageStatus: 'PENDING',
-      },
-      orderBy: { receivedAt: 'desc' },
-      take: 50,
-    });
-    return { pending, count: pending.length };
-  });
-
-  // Unified inbox: ingested emails + manually-shared items.
-  app.get<{
-    Querystring: {
-      status?: 'pending' | 'all';
-      source?: 'GMAIL' | 'OUTLOOK' | 'SHARED' | 'all';
-      accountId?: string;
-      limit?: string;
-    };
-  }>('/api/messages', async (req) => {
-    const limit = Math.min(parseInt(req.query.limit ?? '100', 10), 500);
-    const where: {
-      userId: string;
-      triageStatus?: 'PENDING';
-      source?: 'GMAIL' | 'OUTLOOK' | 'SHARED';
-      externalAccountId?: string;
-    } = { userId: req.user.userId };
-
-    if (req.query.status === 'pending') where.triageStatus = 'PENDING';
-    if (req.query.source && req.query.source !== 'all') where.source = req.query.source;
-    if (req.query.accountId) where.externalAccountId = req.query.accountId;
-
-    const [messages, pendingCount, byStatus] = await Promise.all([
-      prisma.emailMessage.findMany({
-        where,
-        orderBy: [{ triageStatus: 'asc' }, { receivedAt: 'desc' }],
-        take: limit,
-      }),
-      prisma.emailMessage.count({
-        where: { userId: req.user.userId, triageStatus: 'PENDING' },
-      }),
-      prisma.emailMessage.groupBy({
-        by: ['source'],
-        where: { userId: req.user.userId },
-        _count: { _all: true },
-      }),
-    ]);
-
-    return {
-      messages,
-      pendingCount,
-      bySource: byStatus.map((b) => ({ source: b.source, count: b._count._all })),
-    };
-  });
-
-  app.patch<{
-    Params: { id: string };
-    Body: {
-      action: 'CONVERTED_TO_TASK' | 'ATTACHED_TO_GOAL' | 'NOTED' | 'DISCARDED';
-      externalAccountId?: string | null;
-    };
-  }>('/api/share/:id', { schema: { body: TriageInputSchema } }, async (req, reply) => {
-    const existing = await prisma.emailMessage.findFirst({
-      where: { id: req.params.id, userId: req.user.userId },
-      select: { id: true },
-    });
-    if (!existing) return reply.notFound();
-
-    const message = await prisma.emailMessage.update({
-      where: { id: req.params.id },
-      data: {
-        triageStatus: req.body.action,
-        externalAccountId:
-          req.body.externalAccountId !== undefined
-            ? req.body.externalAccountId
-            : undefined,
-      },
-    });
-    return { share: message };
   });
 };

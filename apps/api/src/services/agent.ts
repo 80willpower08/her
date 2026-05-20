@@ -211,7 +211,7 @@ export interface AgentContext {
   // Untriaged shares (PENDING) come first; then recent emails by receivedAt.
   recentMessages: Array<{
     id: string;
-    source: 'GMAIL' | 'OUTLOOK' | 'SHARED';
+    source: 'GMAIL' | 'OUTLOOK' | 'SHARED' | 'SMS';
     triageStatus: string;
     accountLabel: string | null;
     fromAddress: string;
@@ -221,6 +221,7 @@ export interface AgentContext {
     sourceUrl: string | null;
     isUnread: boolean;
     isImportant: boolean;
+    labels: string[];
     receivedAt: string;
     receivedAtLocal: string;
   }>;
@@ -486,6 +487,7 @@ export async function buildAgentContext(
     sourceUrl: m.sourceUrl,
     isUnread: m.isUnread,
     isImportant: m.isImportant,
+    labels: m.labels,
     receivedAt: m.receivedAt.toISOString(),
     receivedAtLocal: formatLocal(m.receivedAt, tz),
   }));
