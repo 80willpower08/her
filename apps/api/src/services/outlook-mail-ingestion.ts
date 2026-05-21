@@ -18,7 +18,31 @@ export interface IngestionResult {
   created: number;
   updated: number;
   deleted: number;
+  /** Messages skipped at ingestion time (junk, deleted folders). */
+  skipped?: number;
   error?: string;
+}
+
+/**
+ * Resolve well-known folder IDs we want to skip (Junk + Deleted Items).
+ * Microsoft Graph exposes /me/mailFolders/<wellKnownName> which returns the
+ * tenant-specific ID. We tolerate failure on either — if the user has an
+ * unusual mailbox setup where one of these is missing, we still proceed.
+ */
+async function getSkipFolderIds(accessToken: string): Promise<Set<string>> {
+  const skip = new Set<string>();
+  for (const wellKnown of ['junkemail', 'deleteditems']) {
+    try {
+      const folder = await msGraphFetch<{ id?: string }>(
+        accessToken,
+        `/me/mailFolders/${wellKnown}`
+      );
+      if (folder.id) skip.add(folder.id);
+    } catch {
+      // Tolerated: continue with whatever we did resolve.
+    }
+  }
+  return skip;
 }
 
 interface MsAddress {
@@ -76,6 +100,9 @@ export async function ingestOutlookMail(account: ExternalAccount): Promise<Inges
   try {
     const accessToken = await getMsAccessToken(account);
 
+    // Cache of folder IDs to skip (Junk + Deleted Items). Resolved once per run.
+    const skipFolderIds = await getSkipFolderIds(accessToken);
+
     // Cutoff in ISO 8601 — Graph wants UTC Zulu format
     const cutoff = new Date(Date.now() - WINDOW_DAYS * 86_400_000).toISOString();
 
@@ -116,6 +143,12 @@ export async function ingestOutlookMail(account: ExternalAccount): Promise<Inges
 
     for (const m of slice) {
       if (!m.id) continue;
+
+      // Skip messages in Junk / Deleted Items — never create the row.
+      if (m.parentFolderId && skipFolderIds.has(m.parentFolderId)) {
+        result.skipped = (result.skipped ?? 0) + 1;
+        continue;
+      }
 
       const fromAddr = m.from?.emailAddress?.address ?? m.sender?.emailAddress?.address ?? '';
       const fromName = m.from?.emailAddress?.name ?? m.sender?.emailAddress?.name ?? null;

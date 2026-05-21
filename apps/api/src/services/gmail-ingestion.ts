@@ -18,8 +18,20 @@ export interface IngestionResult {
   created: number;
   updated: number;
   deleted: number;
+  /** Messages skipped at ingestion time (junk, promotions, social, etc.) */
+  skipped?: number;
   error?: string;
 }
+
+// Gmail category labels that are pure noise for the agent. CATEGORY_UPDATES
+// occasionally carries useful operational mail (shipment notices, receipts)
+// but the user asked to suppress it for now — adjust this list if that
+// changes.
+const GMAIL_SUPPRESS_LABELS = new Set([
+  'CATEGORY_PROMOTIONS',
+  'CATEGORY_SOCIAL',
+  'CATEGORY_UPDATES',
+]);
 
 function decodeBase64Url(s: string): string {
   return Buffer.from(s.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf-8');
@@ -116,6 +128,13 @@ export async function ingestGmail(account: ExternalAccount): Promise<IngestionRe
       });
       const msg = res.data;
       if (!msg.id || !msg.payload) continue;
+
+      const msgLabels = msg.labelIds ?? [];
+      // Skip noise categories — never create the row.
+      if (msgLabels.some((l) => GMAIL_SUPPRESS_LABELS.has(l))) {
+        result.skipped = (result.skipped ?? 0) + 1;
+        continue;
+      }
 
       const headers = msg.payload.headers ?? undefined;
       const from = parseAddress(headerValue(headers, 'From'));
