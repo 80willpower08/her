@@ -925,6 +925,10 @@ enum AgentKind {
   CALENDAR_CONFLICT
   STATUS_SUMMARY
   CHAT
+  // Per-incoming-message relevance scoring. Lightweight context (one
+  // EmailMessage + active projects + recent triage history). Runs
+  // immediately after ingestion via the agent-run BullMQ queue.
+  SCORE_MESSAGE
 }
 
 enum AgentRunStatus {

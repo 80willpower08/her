@@ -8,6 +8,7 @@
 import type { EmailSource, NotificationPriority, SignalRule } from '@prisma/client';
 import { prisma } from '../prisma.js';
 import { dispatchNotification } from './notifications.js';
+import { agentRunQueue } from '../lib/queue.js';
 
 export interface ScoringInput {
   source: EmailSource;
@@ -137,6 +138,8 @@ export async function applyScoringToMessage(
 
 /**
  * Convenience: combine scoring + persistence + push for a fresh message.
+ * After rule-based scoring, also enqueues a per-message agent scoring job
+ * so the AI can refine importance + tag projects + propose noise dismissal.
  */
 export async function processNewMessage(
   messageId: string,
@@ -145,5 +148,20 @@ export async function processNewMessage(
 ): Promise<ScoringResult> {
   const result = await scoreMessage(userId, input);
   await applyScoringToMessage(messageId, userId, input, result);
+
+  // Enqueue per-arrival AI scoring. Fire-and-forget — agent processes
+  // asynchronously and updates the message via the apply_message_score
+  // MCP tool when done. Failure to enqueue is non-fatal; the row keeps
+  // whatever the rules engine gave it.
+  agentRunQueue
+    .add(
+      'run',
+      { userId, kind: 'SCORE_MESSAGE', trigger: 'message-arrival', messageId },
+      { removeOnComplete: 50, removeOnFail: 50 }
+    )
+    .catch(() => {
+      // Swallow; rules-engine importance already applied above.
+    });
+
   return result;
 }

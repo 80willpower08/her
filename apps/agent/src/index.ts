@@ -36,11 +36,20 @@ const queue = new Queue('agent-run', { connection });
 
 interface AgentJobData {
   userId: string;
-  kind: 'PRIORITIZATION' | 'ORCHESTRATOR' | 'EMAIL_TRIAGE' | 'CALENDAR_CONFLICT' | 'STATUS_SUMMARY' | 'CHAT';
+  kind:
+    | 'PRIORITIZATION'
+    | 'ORCHESTRATOR'
+    | 'EMAIL_TRIAGE'
+    | 'CALENDAR_CONFLICT'
+    | 'STATUS_SUMMARY'
+    | 'CHAT'
+    | 'SCORE_MESSAGE';
   trigger: string;
   // CHAT-specific
   chatThreadId?: string;
   userMessageId?: string;
+  // SCORE_MESSAGE-specific
+  messageId?: string;
 }
 
 const SKILL_BY_KIND: Record<AgentJobData['kind'], string> = {
@@ -50,6 +59,7 @@ const SKILL_BY_KIND: Record<AgentJobData['kind'], string> = {
   CALENDAR_CONFLICT: 'prioritization',
   STATUS_SUMMARY: 'prioritization',
   CHAT: 'chat',
+  SCORE_MESSAGE: 'score-message',
 };
 
 async function api<T>(path: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
@@ -316,12 +326,20 @@ async function handleJob(job: Job<AgentJobData>) {
   }
 
   // 2) Build context — pass anchor hints for CHAT so observation curation
-  //    favors the thread topic.
-  const anchorQs = buildAnchorQueryString(kind, chatThreadData);
-  const contextKind = kind === 'CHAT' ? 'PRIORITIZATION' : kind;
-  const { context } = await api<{ context: unknown }>(
-    `/internal/agent-context?userId=${encodeURIComponent(userId)}&kind=${contextKind}${anchorQs}`
-  );
+  //    favors the thread topic. For SCORE_MESSAGE, fetch a tiny per-message
+  //    context instead of the full prioritization payload.
+  let context: unknown;
+  if (kind === 'SCORE_MESSAGE') {
+    if (!job.data.messageId) throw new Error('SCORE_MESSAGE job missing messageId');
+    context = await api(`/internal/score-context/${job.data.messageId}`);
+  } else {
+    const anchorQs = buildAnchorQueryString(kind, chatThreadData);
+    const contextKind = kind === 'CHAT' ? 'PRIORITIZATION' : kind;
+    const res = await api<{ context: unknown }>(
+      `/internal/agent-context?userId=${encodeURIComponent(userId)}&kind=${contextKind}${anchorQs}`
+    );
+    context = res.context;
+  }
 
   // 2) Create AgentRun (RUNNING)
   const inputContext = kind === 'CHAT'

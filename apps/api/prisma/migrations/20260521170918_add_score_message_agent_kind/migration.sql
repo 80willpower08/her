@@ -1,0 +1,2 @@
+-- AlterEnum
+ALTER TYPE "AgentKind" ADD VALUE 'SCORE_MESSAGE';

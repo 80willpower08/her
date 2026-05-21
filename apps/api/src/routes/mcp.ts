@@ -358,6 +358,38 @@ const TOOLS: ToolDef[] = [
       },
     },
   },
+  {
+    name: 'apply_message_score',
+    description:
+      "Call this exactly once during a SCORE_MESSAGE-kind run to record your assessment of the incoming message. Updates the message's importance, adds context labels (project tags + a 'reasoning:' label preserving your one-line rationale), and optionally marks it dismissed-as-noise (triageStatus DISCARDED). Use this INSTEAD of record_run_summary for SCORE_MESSAGE runs.",
+    inputSchema: {
+      type: 'object',
+      required: ['agentRunId', 'messageId', 'importance', 'reasoning'],
+      additionalProperties: false,
+      properties: {
+        agentRunId: { type: 'string' },
+        messageId: { type: 'string', description: 'The EmailMessage row being scored.' },
+        importance: {
+          type: 'string',
+          enum: ['LOW', 'NORMAL', 'HIGH', 'URGENT'],
+          description: 'Final importance after considering project relevance, sender, and prior triage patterns.',
+        },
+        projectIds: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Project IDs this message relates to. Empty if none.',
+        },
+        reasoning: {
+          type: 'string',
+          description: 'One concise sentence the user will see during triage explaining why you chose this importance.',
+        },
+        dismissAsNoise: {
+          type: 'boolean',
+          description: 'If true, sets triageStatus DISCARDED. Use ONLY when the message clearly matches a pattern the user dismisses (delivery codes, marketing blast, etc.).',
+        },
+      },
+    },
+  },
 ];
 
 async function loadRun(agentRunId: string) {
@@ -743,6 +775,69 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<{ 
         data: { updatedAt: new Date() },
       });
       return { ok: true, message: 'Chat reply posted.' };
+    }
+    case 'apply_message_score': {
+      const messageId = String(args.messageId ?? '');
+      const importance = String(args.importance ?? '') as
+        | 'LOW' | 'NORMAL' | 'HIGH' | 'URGENT';
+      const reasoning = String(args.reasoning ?? '').trim();
+      const projectIds = Array.isArray(args.projectIds)
+        ? (args.projectIds as unknown[]).filter((x): x is string => typeof x === 'string')
+        : [];
+      const dismissAsNoise = args.dismissAsNoise === true;
+
+      if (!messageId) return { ok: false, message: 'messageId required' };
+      if (!reasoning) return { ok: false, message: 'reasoning required' };
+
+      const message = await prisma.emailMessage.findUnique({ where: { id: messageId } });
+      if (!message) return { ok: false, message: `Message ${messageId} not found` };
+      if (message.userId !== run.userId)
+        return { ok: false, message: 'Message does not belong to this run' };
+
+      // Resolve project names for human-readable labels. Tolerate missing IDs
+      // (agent may hallucinate one occasionally).
+      const projects = projectIds.length
+        ? await prisma.project.findMany({
+            where: { id: { in: projectIds }, userId: run.userId },
+            select: { id: true, title: true },
+          })
+        : [];
+      const projectLabels = projects.map((p) => `project:${p.title}`);
+
+      // Drop any prior reasoning label so re-scores don't accumulate.
+      const filtered = message.labels.filter((l) => !l.startsWith('reasoning:'));
+      const reasoningLabel = `reasoning:${reasoning.slice(0, 240)}`;
+      const mergedLabels = Array.from(
+        new Set([...filtered, ...projectLabels, reasoningLabel])
+      );
+
+      const PRIORITY_RANK = { LOW: 0, NORMAL: 1, HIGH: 2, URGENT: 3 } as const;
+
+      await prisma.emailMessage.update({
+        where: { id: messageId },
+        data: {
+          importance,
+          labels: mergedLabels,
+          isImportant: PRIORITY_RANK[importance] >= PRIORITY_RANK.HIGH,
+          triageStatus: dismissAsNoise ? 'DISCARDED' : message.triageStatus,
+        },
+      });
+
+      // Also stamp the AgentRun decision blob so the scoring is auditable.
+      await prisma.agentRun.update({
+        where: { id: run.id },
+        data: {
+          decision: {
+            messageId,
+            importance,
+            projectIds,
+            reasoning,
+            dismissAsNoise,
+          },
+        },
+      });
+
+      return { ok: true, message: `Scored ${importance}${dismissAsNoise ? ' (dismissed)' : ''}` };
     }
     default:
       return { ok: false, message: `Unknown tool: ${name}` };

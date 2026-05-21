@@ -32,6 +32,7 @@ const AGENT_KINDS = [
   'CALENDAR_CONFLICT',
   'STATUS_SUMMARY',
   'CHAT',
+  'SCORE_MESSAGE',
 ] as const;
 
 export const agentInternalRoutes: FastifyPluginAsync = async (app) => {
@@ -406,4 +407,68 @@ export const agentInternalRoutes: FastifyPluginAsync = async (app) => {
       return { message };
     }
   );
+
+  // Short context for a SCORE_MESSAGE run. Just the one message + active
+  // projects (so the agent can tag relevance) + the user's recent triage
+  // observations (so the agent learns from past actions) + active signal
+  // rules (so the agent knows the default routing).
+  app.get<{ Params: { id: string } }>('/internal/score-context/:id', async (req, reply) => {
+    const message = await prisma.emailMessage.findUnique({
+      where: { id: req.params.id },
+      select: {
+        id: true,
+        userId: true,
+        source: true,
+        fromAddress: true,
+        fromName: true,
+        toAddresses: true,
+        subject: true,
+        snippet: true,
+        bodyText: true,
+        labels: true,
+        importance: true,
+        receivedAt: true,
+      },
+    });
+    if (!message) return reply.notFound();
+
+    const [projects, observations, rules] = await Promise.all([
+      prisma.project.findMany({
+        where: { userId: message.userId, status: { in: ['ACTIVE', 'PAUSED'] } },
+        select: { id: true, title: true, status: true, description: true },
+        orderBy: { updatedAt: 'desc' },
+        take: 30,
+      }),
+      // Recent triage signals: items the user actively classified.
+      prisma.emailMessage.findMany({
+        where: {
+          userId: message.userId,
+          triageStatus: { in: ['DISCARDED', 'CONVERTED_TO_TASK', 'ATTACHED_TO_GOAL', 'NOTED'] },
+        },
+        select: {
+          source: true,
+          fromAddress: true,
+          fromName: true,
+          subject: true,
+          triageStatus: true,
+          labels: true,
+        },
+        orderBy: { updatedAt: 'desc' },
+        take: 20,
+      }),
+      prisma.signalRule.findMany({
+        where: { userId: message.userId, enabled: true },
+        select: { name: true, setImportance: true, addLabels: true },
+        orderBy: { priority: 'asc' },
+        take: 30,
+      }),
+    ]);
+
+    return {
+      message,
+      projects,
+      recentTriage: observations,
+      signalRules: rules,
+    };
+  });
 };
