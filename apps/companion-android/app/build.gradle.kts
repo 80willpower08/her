@@ -21,6 +21,16 @@ android {
         }
     }
 
+    // Rename APK output from app-<variant>.apk → her-companion-<version>-<variant>.apk
+    applicationVariants.all {
+        val variant = this
+        outputs
+            .filterIsInstance<com.android.build.gradle.internal.api.ApkVariantOutputImpl>()
+            .forEach { output ->
+                output.outputFileName = "her-companion-${variant.versionName}-${variant.name}.apk"
+            }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

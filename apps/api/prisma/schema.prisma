@@ -32,6 +32,7 @@ model User {
   externalAccounts ExternalAccount[]
   calendarEvents   CalendarEvent[]
   emailMessages    EmailMessage[]
+  signalRules      SignalRule[]
   calendarSources  CalendarSource[]
   sheetSources     SheetSource[]
   devices          Device[]
@@ -549,6 +550,10 @@ model EmailMessage {
   isStarred  Boolean @default(false)
   isImportant Boolean @default(false)
 
+  // Importance stamped by the signal_rules evaluator at insert time.
+  // Used for inbox sort + as the trigger for real-time phone push.
+  importance NotificationPriority @default(NORMAL)
+
   // Triage state for SHARED items: PENDING until user picks an action.
   triageStatus EmailTriageStatus @default(NONE)
 
@@ -743,6 +748,64 @@ enum EmailTriageStatus {
   DISCARDED
 }
 
+// Where a SignalRule came from. USER_AUTHORED rules are managed by the user
+// (eventually via Settings UI). DEFAULT_SEED rules ship with the app for new
+// installs. AGENT_LEARNED are proposed by observing triage actions (Phase 4).
+enum SignalRuleSource {
+  USER_AUTHORED
+  DEFAULT_SEED
+  AGENT_LEARNED
+}
+
+// Rules that score incoming messages (email / SMS / notification) for
+// importance and tag them with context labels. Evaluated at ingestion time;
+// effects stamped on the EmailMessage row, and HIGH/URGENT rules trigger an
+// immediate phone push via the existing notification dispatcher.
+//
+// Conditions are AND across dimensions, OR within a dimension's array of
+// patterns. Empty arrays mean "don't filter on this dimension."
+model SignalRule {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name    String
+  enabled Boolean @default(true)
+  // Lower = evaluated first. Rules are accumulative: all matching rules
+  // contribute their labels and the HIGHEST importance wins.
+  priority Int @default(100)
+
+  // ── CONDITIONS (all optional) ──
+  sources         EmailSource[]
+  // Substring matches (case-insensitive). Use '@transamerica.com' to match
+  // any address at that domain. Use a full address for an exact match.
+  toMatches       String[]
+  fromMatches     String[]
+  subjectMatches  String[]
+  bodyMatches     String[]
+  // Matches against EmailMessage.labels[] entries. Useful for Gmail label
+  // matching ('IMPORTANT') or notification package matching ('package:com.microsoft.teams').
+  labelMatches    String[]
+
+  // ── EFFECTS ──
+  // Stamp this importance on the message. If multiple rules match, the
+  // highest wins (URGENT > HIGH > NORMAL > LOW).
+  setImportance NotificationPriority?
+  // Labels to add (e.g. 'context:Transamerica', 'work', 'family').
+  addLabels     String[]
+  // If true AND setImportance >= HIGH, fire an immediate push notification.
+  pushToPhone   Boolean @default(true)
+  // If true, the agent's daily 8am run treats this message as background.
+  suppressDaily Boolean @default(false)
+
+  source    SignalRuleSource @default(USER_AUTHORED)
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  @@index([userId, enabled, priority])
+  @@map("signal_rules")
+}
+
 enum IngestionRunStatus {
   RUNNING
   OK
@@ -814,6 +877,7 @@ enum NotificationStatus {
 enum NotificationPriority {
   LOW
   NORMAL
+  HIGH
   URGENT
 }
 

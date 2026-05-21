@@ -6,6 +6,7 @@
 import type { ExternalAccount, IngestionRunStatus } from '@prisma/client';
 import { prisma } from '../prisma.js';
 import { getMsAccessToken, msGraphFetch } from './microsoft.js';
+import { processNewMessage } from './signal-rules.js';
 
 const WINDOW_DAYS = 7;
 const MAX_MESSAGES = 200;
@@ -173,7 +174,7 @@ export async function ingestOutlookMail(account: ExternalAccount): Promise<Inges
         select: { id: true },
       });
 
-      await prisma.emailMessage.upsert({
+      const stored = await prisma.emailMessage.upsert({
         where: {
           externalAccountId_sourceMessageId: {
             externalAccountId: account.id,
@@ -182,10 +183,23 @@ export async function ingestOutlookMail(account: ExternalAccount): Promise<Inges
         },
         update: data,
         create: data,
+        select: { id: true },
       });
 
-      if (before) result.updated += 1;
-      else result.created += 1;
+      if (before) {
+        result.updated += 1;
+      } else {
+        result.created += 1;
+        await processNewMessage(stored.id, account.userId, {
+          source: 'OUTLOOK',
+          fromAddress: data.fromAddress,
+          fromName: data.fromName,
+          toAddresses: data.toAddresses,
+          subject: data.subject,
+          bodyText: data.bodyText,
+          labels: data.labels,
+        });
+      }
     }
 
     result.ok = true;

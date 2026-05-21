@@ -7,6 +7,7 @@ import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import { SINGLE_USER_ID } from '../auth.js';
 import { env } from '../env.js';
 import { prisma } from '../prisma.js';
+import { processNewMessage } from '../services/signal-rules.js';
 
 const ShareInputSchema = {
   type: 'object',
@@ -156,7 +157,21 @@ export const shareRoutes: FastifyPluginAsync = async (app) => {
         },
       });
 
-      return { share: message };
+      // Apply signal-rules: stamps importance + extra labels, and fires an
+      // immediate phone push if a rule matched with HIGH/URGENT.
+      await processNewMessage(message.id, req.user.userId, {
+        source,
+        fromAddress: sender.address,
+        fromName: sender.name,
+        toAddresses: [],
+        subject,
+        bodyText: text || null,
+        labels,
+      });
+
+      // Return the latest state (importance/labels may have been updated).
+      const final = await prisma.emailMessage.findUnique({ where: { id: message.id } });
+      return { share: final };
     }
   );
 

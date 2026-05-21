@@ -6,6 +6,7 @@ import { google } from 'googleapis';
 import type { gmail_v1 } from 'googleapis';
 import { prisma } from '../prisma.js';
 import { getAuthenticatedClient } from './google.js';
+import { processNewMessage } from './signal-rules.js';
 
 const WINDOW_DAYS = 7;
 const MAX_MESSAGES = 200;
@@ -162,7 +163,7 @@ export async function ingestGmail(account: ExternalAccount): Promise<IngestionRe
         select: { id: true },
       });
 
-      await prisma.emailMessage.upsert({
+      const stored = await prisma.emailMessage.upsert({
         where: {
           externalAccountId_sourceMessageId: {
             externalAccountId: account.id,
@@ -171,10 +172,25 @@ export async function ingestGmail(account: ExternalAccount): Promise<IngestionRe
         },
         update: data,
         create: data,
+        select: { id: true },
       });
 
-      if (before) result.updated += 1;
-      else result.created += 1;
+      if (before) {
+        result.updated += 1;
+      } else {
+        result.created += 1;
+        // Score against signal_rules — first appearance only, so we don't
+        // re-push notifications on every sync.
+        await processNewMessage(stored.id, account.userId, {
+          source: 'GMAIL',
+          fromAddress: data.fromAddress,
+          fromName: data.fromName,
+          toAddresses: data.toAddresses,
+          subject: data.subject,
+          bodyText: data.bodyText,
+          labels: data.labels,
+        });
+      }
     }
 
     result.ok = true;

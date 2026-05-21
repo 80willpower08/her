@@ -1,7 +1,7 @@
 {
-  "name": "Time-keeper",
-  "short_name": "Time-keeper",
-  "description": "Personal AI time-keeper",
+  "name": "her",
+  "short_name": "her",
+  "description": "your personal AI life-keeper",
   "start_url": "/today",
   "scope": "/",
   "display": "standalone",
