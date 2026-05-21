@@ -1,0 +1,2 @@
+-- AlterEnum
+ALTER TYPE "EmailSource" ADD VALUE 'NOTIFICATION';

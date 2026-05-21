@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">her-companion</string>
+    <string name="listener_label">her notification listener</string>
+    <string name="share_url_label">Share endpoint URL</string>
+    <string name="ingest_token_label">Ingest token (X-Ingest-Token)</string>
+    <string name="ingest_token_hint">Paste the INGEST_TOKEN env value from her\'s server</string>
+    <string name="allowlist_label">Allowlist (comma-separated package names)</string>
+    <string name="allowlist_hint">com.google.android.apps.messaging,com.microsoft.teams,com.google.android.gm</string>
+    <string name="btn_save">Save</string>
+    <string name="btn_open_listener">Open Notification Access settings</string>
+    <string name="btn_test">Send test notification to her</string>
+</resources>

@@ -731,6 +731,7 @@ enum EmailSource {
   OUTLOOK
   SHARED
   SMS
+  NOTIFICATION
 }
 
 enum EmailTriageStatus {

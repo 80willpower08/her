@@ -211,7 +211,7 @@ export interface AgentContext {
   // Untriaged shares (PENDING) come first; then recent emails by receivedAt.
   recentMessages: Array<{
     id: string;
-    source: 'GMAIL' | 'OUTLOOK' | 'SHARED' | 'SMS';
+    source: 'GMAIL' | 'OUTLOOK' | 'SHARED' | 'SMS' | 'NOTIFICATION';
     triageStatus: string;
     accountLabel: string | null;
     fromAddress: string;

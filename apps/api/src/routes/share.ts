@@ -18,11 +18,16 @@ const ShareInputSchema = {
     receivedAt: { type: 'string', format: 'date-time' },
     externalAccountId: { type: ['string', 'null'] },
     // Explicit source. Defaults to SHARED if omitted.
-    source: { type: 'string', enum: ['SHARED', 'SMS'] },
+    source: { type: 'string', enum: ['SHARED', 'SMS', 'NOTIFICATION'] },
     // For SMS (and other future external ingests) the caller knows the
     // sender directly — phone number / contact name from Android.
     fromAddress: { type: 'string', maxLength: 300 },
     fromName: { type: 'string', maxLength: 200 },
+    // For NOTIFICATION source: which Android app posted it. Stored as
+    // labels so the agent can disambiguate notification snippets from
+    // full-body Gmail/Outlook messages.
+    sourcePackage: { type: 'string', maxLength: 200 },
+    sourceAppLabel: { type: 'string', maxLength: 100 },
   },
   additionalProperties: false,
 } as const;
@@ -80,9 +85,11 @@ export const shareRoutes: FastifyPluginAsync = async (app) => {
       url?: string;
       receivedAt?: string;
       externalAccountId?: string | null;
-      source?: 'SHARED' | 'SMS';
+      source?: 'SHARED' | 'SMS' | 'NOTIFICATION';
       fromAddress?: string;
       fromName?: string;
+      sourcePackage?: string;
+      sourceAppLabel?: string;
     };
   }>(
     '/api/share',
@@ -97,6 +104,8 @@ export const shareRoutes: FastifyPluginAsync = async (app) => {
         source = 'SHARED',
         fromAddress,
         fromName,
+        sourcePackage,
+        sourceAppLabel,
       } = req.body;
 
       if (!title.trim() && !text.trim() && !url.trim()) {
@@ -120,6 +129,13 @@ export const shareRoutes: FastifyPluginAsync = async (app) => {
         if (!owns) return reply.badRequest('Unknown externalAccountId');
       }
 
+      // Build labels: always include the source tag, plus package/app
+      // identifiers for NOTIFICATION rows so the agent can tell Teams from
+      // Gmail-notification snippets etc.
+      const labels: string[] = [source];
+      if (sourcePackage) labels.push(`package:${sourcePackage}`);
+      if (sourceAppLabel) labels.push(`app:${sourceAppLabel}`);
+
       const message = await prisma.emailMessage.create({
         data: {
           userId: req.user.userId,
@@ -133,7 +149,7 @@ export const shareRoutes: FastifyPluginAsync = async (app) => {
           snippet: text.slice(0, 200) || null,
           bodyText: text || null,
           sourceUrl: url || null,
-          labels: [source],
+          labels,
           isUnread: true,
           triageStatus: 'PENDING',
           receivedAt: receivedAt ? new Date(receivedAt) : new Date(),
@@ -172,7 +188,7 @@ export const shareRoutes: FastifyPluginAsync = async (app) => {
     jwt.get<{
       Querystring: {
         status?: 'pending' | 'all';
-        source?: 'GMAIL' | 'OUTLOOK' | 'SHARED' | 'SMS' | 'all';
+        source?: 'GMAIL' | 'OUTLOOK' | 'SHARED' | 'SMS' | 'NOTIFICATION' | 'all';
         accountId?: string;
         limit?: string;
       };
@@ -181,7 +197,7 @@ export const shareRoutes: FastifyPluginAsync = async (app) => {
       const where: {
         userId: string;
         triageStatus?: 'PENDING';
-        source?: 'GMAIL' | 'OUTLOOK' | 'SHARED' | 'SMS';
+        source?: 'GMAIL' | 'OUTLOOK' | 'SHARED' | 'SMS' | 'NOTIFICATION';
         externalAccountId?: string;
       } = { userId: req.user.userId };
 
