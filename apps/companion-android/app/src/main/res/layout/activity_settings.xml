@@ -74,6 +74,12 @@
             android:layout_height="wrap_content"
             android:text="@string/btn_test" />
 
+        <Button
+            android:id="@+id/btn_sms_backfill"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/btn_sms_backfill" />
+
         <TextView
             android:id="@+id/text_status"
             android:layout_width="match_parent"

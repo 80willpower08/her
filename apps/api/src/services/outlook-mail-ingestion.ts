@@ -8,7 +8,7 @@ import { prisma } from '../prisma.js';
 import { getMsAccessToken, msGraphFetch } from './microsoft.js';
 import { processNewMessage } from './signal-rules.js';
 
-const WINDOW_DAYS = 7;
+const WINDOW_DAYS = 30;
 const MAX_MESSAGES = 200;
 const BODY_MAX_CHARS = 2000;
 

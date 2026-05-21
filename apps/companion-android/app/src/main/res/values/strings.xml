@@ -10,4 +10,10 @@
     <string name="btn_save">Save</string>
     <string name="btn_open_listener">Open Notification Access settings</string>
     <string name="btn_test">Send test notification to her</string>
+    <string name="btn_sms_backfill">Backfill SMS history…</string>
+    <string name="backfill_title">SMS History Backfill</string>
+    <string name="backfill_explain">Reads inbound SMS messages from your phone and forwards them to her so the agent has context for ongoing threads. Outbound messages are skipped. Re-runnable.</string>
+    <string name="backfill_range_label">Time range</string>
+    <string name="backfill_start">Start backfill</string>
+    <string name="backfill_stop">Stop</string>
 </resources>

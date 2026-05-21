@@ -43,6 +43,9 @@ class SettingsActivity : Activity() {
             startActivity(Intent(AndroidSettings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
         }
         findViewById<Button>(R.id.btn_test).setOnClickListener { testForward() }
+        findViewById<Button>(R.id.btn_sms_backfill).setOnClickListener {
+            startActivity(Intent(this, SmsBackfillActivity::class.java))
+        }
         updateStatus()
     }
 

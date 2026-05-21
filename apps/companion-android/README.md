@@ -11,11 +11,12 @@ The whole app is under 500 lines. The files that matter for trust:
 
 | File | Lines | What to look for |
 |---|---|---|
-| `app/src/main/AndroidManifest.xml` | ~35 | **Only** `INTERNET`, `POST_NOTIFICATIONS`, `BIND_NOTIFICATION_LISTENER_SERVICE` are declared. No SMS, contacts, storage, location, microphone, camera. |
+| `app/src/main/AndroidManifest.xml` | ~40 | Declared permissions: `INTERNET`, `POST_NOTIFICATIONS`, `BIND_NOTIFICATION_LISTENER_SERVICE`, `READ_SMS`. No contacts, storage, location, microphone, camera. READ_SMS is requested at runtime when you tap "Backfill SMS history" — not at install time. |
 | `app/src/main/java/com/her/companion/HerNotificationListener.kt` | ~70 | The only callback the listener exposes. Allowlist gate before any forwarding. No file writes, no DB. |
 | `app/src/main/java/com/her/companion/Forwarder.kt` | ~50 | The only network call in the app. Look at the URL — it comes from your saved `Settings.shareUrl`, not hardcoded. |
 | `app/src/main/java/com/her/companion/Settings.kt` | ~70 | EncryptedSharedPreferences — the ingest token is AES-256-GCM at rest. |
-| `app/src/main/java/com/her/companion/SettingsActivity.kt` | ~85 | The only Activity. No webviews. No native code. |
+| `app/src/main/java/com/her/companion/SettingsActivity.kt` | ~90 | Main Activity. No webviews. No native code. |
+| `app/src/main/java/com/her/companion/SmsBackfillActivity.kt` | ~140 | One-shot SMS history reader. Reads inbound messages from Android's SMS provider in a user-selected time range and forwards each via Forwarder. Skips sent messages. Permission is requested at runtime, not at install. |
 | `app/src/main/java/com/her/companion/LruDedupCache.kt` | ~25 | Dedupe utility. Pure data structure, no IO. |
 | `app/build.gradle.kts` | ~30 | **No** Firebase, Crashlytics, Analytics, Ads, or telemetry dependencies. Just `androidx.core` + `security-crypto`. |
 
