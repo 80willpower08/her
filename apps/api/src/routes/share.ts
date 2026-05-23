@@ -268,5 +268,91 @@ export const shareRoutes: FastifyPluginAsync = async (app) => {
       });
       return { share: message };
     });
+
+    // Dismiss this message AND create a SignalRule so future messages from
+    // the same sender/package are auto-discarded at ingestion time. This is
+    // the user-driven path to teach her what's noise without writing rules
+    // by hand.
+    jwt.post<{ Params: { id: string } }>(
+      '/api/share/:id/suppress',
+      async (req, reply) => {
+        const msg = await prisma.emailMessage.findFirst({
+          where: { id: req.params.id, userId: req.user.userId },
+        });
+        if (!msg) return reply.notFound();
+
+        // 1) Discard this row.
+        const updated = await prisma.emailMessage.update({
+          where: { id: msg.id },
+          data: { triageStatus: 'DISCARDED' },
+        });
+
+        // 2) Build a SignalRule that captures the sender. Prefer the
+        //    package label for NOTIFICATION rows (more reliable than
+        //    individual senders since one app can post from many names);
+        //    fall back to fromAddress otherwise.
+        const packageLabel = msg.labels.find((l) => l.startsWith('package:'));
+        let ruleName: string;
+        let labelMatches: string[] = [];
+        let fromMatches: string[] = [];
+
+        if (msg.source === 'NOTIFICATION' && packageLabel) {
+          ruleName = `Suppress ${packageLabel.replace('package:', '')}`;
+          labelMatches = [packageLabel];
+        } else {
+          ruleName = `Suppress ${msg.fromAddress || msg.fromName || 'sender'}`;
+          fromMatches = [msg.fromAddress || msg.fromName || ''].filter(Boolean);
+        }
+
+        // Don't duplicate if the user has already suppressed this source.
+        const dupe = await prisma.signalRule.findFirst({
+          where: { userId: req.user.userId, name: ruleName },
+        });
+        let rule = dupe;
+        if (!dupe) {
+          rule = await prisma.signalRule.create({
+            data: {
+              userId: req.user.userId,
+              name: ruleName,
+              enabled: true,
+              priority: 5, // runs early so it can mark as LOW before higher-numbered rules
+              sources: msg.source === 'NOTIFICATION' ? ['NOTIFICATION'] : [msg.source],
+              labelMatches,
+              fromMatches,
+              setImportance: 'LOW',
+              addLabels: ['noise:user-suppressed'],
+              pushToPhone: false,
+              suppressDaily: true,
+              source: 'USER_AUTHORED',
+            },
+          });
+        }
+
+        // 3) Retroactively discard any other PENDING messages from this same
+        //    sender/package so the user's inbox visibly clears.
+        const sweepWhere: {
+          userId: string;
+          triageStatus: 'PENDING';
+          labels?: { has: string };
+          fromAddress?: string;
+        } = {
+          userId: req.user.userId,
+          triageStatus: 'PENDING',
+        };
+        if (labelMatches.length) sweepWhere.labels = { has: labelMatches[0] };
+        else if (fromMatches.length) sweepWhere.fromAddress = fromMatches[0];
+
+        const swept = await prisma.emailMessage.updateMany({
+          where: sweepWhere,
+          data: { triageStatus: 'DISCARDED' },
+        });
+
+        return {
+          share: updated,
+          rule: rule ? { id: rule.id, name: rule.name } : undefined,
+          retroactivelyDiscarded: swept.count,
+        };
+      }
+    );
   });
 };

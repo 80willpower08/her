@@ -355,6 +355,13 @@ export const api = {
         method: 'PATCH',
         body: JSON.stringify({ action, externalAccountId }),
       }),
+    // Dismiss this message AND create a SignalRule so future messages from
+    // the same sender/package are auto-DISCARDED at ingestion time.
+    dismissAndSuppress: (id: string) =>
+      request<{ share: SharedItem; rule?: { id: string; name: string } }>(
+        `/api/share/${id}/suppress`,
+        { method: 'POST', body: JSON.stringify({}) }
+      ),
   },
 
   sheetSources: {

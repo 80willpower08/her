@@ -110,12 +110,18 @@ export async function applyScoringToMessage(
   // Merge new labels into the existing labels array.
   const mergedLabels = Array.from(new Set([...input.labels, ...result.addedLabels]));
 
+  // If a user-authored suppression rule matched (recognizable by the
+  // "noise:" label prefix), auto-discard at ingestion so the user never
+  // sees the row in their PENDING inbox.
+  const wasSuppressed = result.addedLabels.some((l) => l.startsWith('noise:'));
+
   await prisma.emailMessage.update({
     where: { id: messageId },
     data: {
       importance: result.importance,
       labels: mergedLabels,
       isImportant: PRIORITY_RANK[result.importance] >= PRIORITY_RANK.HIGH,
+      ...(wasSuppressed ? { triageStatus: 'DISCARDED' as const } : {}),
     },
   });
 

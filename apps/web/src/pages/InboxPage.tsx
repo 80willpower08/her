@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { format, formatDistanceToNow } from 'date-fns';
-import { Inbox, Mail, Share2, ArrowRight, MessageSquare } from 'lucide-react';
+import { Inbox, Mail, Share2, ArrowRight, MessageSquare, X, EyeOff } from 'lucide-react';
 import type { ExternalAccount, SharedItem } from '@time-keeper/shared';
 import { api } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
@@ -157,12 +157,23 @@ function SummaryPill({
 
 function MessageRow({ message, account }: { message: SharedItem; account: ExternalAccount | null }) {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [chatOpen, setChatOpen] = useState(false);
   const isPending = message.triageStatus === 'PENDING';
+  const isDiscarded = message.triageStatus === 'DISCARDED';
   const accountLabel = account?.label || account?.accountEmail || (message.source === 'SHARED' ? 'Shared' : 'Account');
 
+  const dismissOne = useMutation({
+    mutationFn: () => api.share.triage(message.id, 'DISCARDED'),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['messages'] }),
+  });
+  const dismissAndSuppress = useMutation({
+    mutationFn: () => api.share.dismissAndSuppress(message.id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['messages'] }),
+  });
+
   return (
-    <Card className={isPending ? 'border-primary/40' : ''}>
+    <Card className={isPending ? 'border-primary/40' : isDiscarded ? 'opacity-50' : ''}>
       <CardHeader className="space-y-1 p-3 pb-2">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
@@ -207,13 +218,40 @@ function MessageRow({ message, account }: { message: SharedItem; account: Extern
               <MessageSquare className="h-3.5 w-3.5" />
             </Button>
             {isPending ? (
-              <Button
-                size="sm"
-                onClick={() => navigate(`/share-receive?messageId=${encodeURIComponent(message.id)}`)}
-              >
-                Triage
-                <ArrowRight className="h-3 w-3" />
-              </Button>
+              <>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7"
+                  onClick={() => dismissOne.mutate()}
+                  disabled={dismissOne.isPending}
+                  title="Dismiss as noise"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7"
+                  onClick={() => {
+                    const senderLabel = message.fromName || message.fromAddress;
+                    if (confirm(`Dismiss this AND auto-discard future messages from "${senderLabel}"?`)) {
+                      dismissAndSuppress.mutate();
+                    }
+                  }}
+                  disabled={dismissAndSuppress.isPending}
+                  title="Dismiss + suppress this sender going forward"
+                >
+                  <EyeOff className="h-3.5 w-3.5" />
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={() => navigate(`/share-receive?messageId=${encodeURIComponent(message.id)}`)}
+                >
+                  Triage
+                  <ArrowRight className="h-3 w-3" />
+                </Button>
+              </>
             ) : null}
           </div>
         </div>

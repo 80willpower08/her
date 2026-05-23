@@ -467,6 +467,11 @@ export async function buildAgentContext(
   const recentEmailRows = await prisma.emailMessage.findMany({
     where: {
       userId,
+      // Items the user (or agent) has marked DISCARDED are noise — exclude
+      // them from the context so the agent stops re-considering them on
+      // every run. Anything actionable should still be PENDING or have
+      // been moved to CONVERTED_TO_TASK / NOTED.
+      triageStatus: { not: 'DISCARDED' },
       OR: [
         { triageStatus: 'PENDING' },
         { receivedAt: { gte: sevenDaysAgo } },
